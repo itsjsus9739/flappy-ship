@@ -52,7 +52,7 @@ PIPE_HITBOX_PADDING = 0    # >0 hace la colisión más permisiva (en píxeles)
 # Si es un solo archivo con varios frames en horizontal (spritesheet),
 # indica cuántos frames tiene en PIPE_SHEET_FRAMES.
 PIPE_SPRITES_PATH = os.path.join(BASE_DIR, "pipes")
-PIPE_SHEET_FRAMES = 1
+PIPE_SHEET_FRAMES = 7
 PIPE_ANIM_FPS = 8          # velocidad de la animación
 
 # "tile"    = repite el sprite hacia abajo/arriba sin deformarlo
