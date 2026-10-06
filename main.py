@@ -24,6 +24,18 @@ GAME_WINDOW_POS = (50, 80)
 CAMERA_WINDOW_POS = (GAME_WINDOW_POS[0] + WIDTH + 20, GAME_WINDOW_POS[1])
 DRONE_SPEED = 9
 PIPE_SPEED = 6
+# Dificultad progresiva
+DIFFICULTY_START_SCORE = 5   # a partir de este puntaje empieza a subir
+DIFFICULTY_STEP = 1          # cada cuántos puntos sube un nivel de dificultad
+
+SPACING_DECREASE = 15        # px que se acorta la distancia entre tubos por nivel
+MIN_PIPE_SPACING = 220       # límite mínimo de distancia entre tubos
+
+GAP_DECREASE = 4             # px que se cierra el hueco por nivel
+MIN_PIPE_GAP = 150           # límite mínimo del hueco
+
+SPEED_INCREASE = 0.3         # aumento de velocidad por nivel
+MAX_PIPE_SPEED = 10          # límite máximo de velocidad
 
 CAMERA_INDEX = 0
 MODEL_PATH = os.path.join(BASE_DIR, "models", "pose_landmarker_lite.task")
@@ -269,7 +281,12 @@ class Background:
             surface.blit(self.image, (x, 0))
             x += w
 
-
+def get_difficulty(score):
+    level = max(0, score - DIFFICULTY_START_SCORE) // DIFFICULTY_STEP
+    spacing = max(MIN_PIPE_SPACING, PIPE_SPACING - level * SPACING_DECREASE)
+    gap = max(MIN_PIPE_GAP, PIPE_GAP - level * GAP_DECREASE)
+    speed = min(MAX_PIPE_SPEED, PIPE_SPEED + level * SPEED_INCREASE)
+    return level, spacing, gap, speed
 class Drone:
     def __init__(self):
         self.width = 50
@@ -321,11 +338,11 @@ def build_pipe_surface(frame, height):
 
 
 class Pipe:
-    def __init__(self, frames):
+    def __init__(self, frames, gap=PIPE_GAP):
         self.x = WIDTH
         self.passed = False
-        self.bottom_height = random.randint(PIPE_MIN_SEGMENT, HEIGHT - PIPE_GAP - PIPE_MIN_SEGMENT)
-        self.top_height = HEIGHT - PIPE_GAP - self.bottom_height
+        self.bottom_height = random.randint(PIPE_MIN_SEGMENT, HEIGHT - gap - PIPE_MIN_SEGMENT)
+        self.top_height = HEIGHT - gap - self.bottom_height
 
         self.rect_top = pygame.Rect(self.x, 0, PIPE_WIDTH, self.top_height)
         self.rect_bottom = pygame.Rect(self.x, HEIGHT - self.bottom_height, PIPE_WIDTH, self.bottom_height)
@@ -340,10 +357,10 @@ class Pipe:
                 top = pygame.transform.flip(top, False, True)
             self.top_surfaces.append(top)
 
-    def move(self):
-        self.x -= PIPE_SPEED
-        self.rect_top.x = self.x
-        self.rect_bottom.x = self.x
+    def move(self, speed=PIPE_SPEED):
+        self.x -= speed
+        self.rect_top.x = int(self.x)
+        self.rect_bottom.x = int(self.x)
 
     def collides(self, rect):
         pad = PIPE_HITBOX_PADDING * 2
@@ -396,6 +413,7 @@ def run_game():
     drone = Drone()
     pipes = [Pipe(pipe_frames)]
     score = 0
+    level = 0              # <- aquí
     game_over = False
 
     while True:
@@ -422,11 +440,13 @@ def run_game():
             gesture = "DOWN"
 
         if not game_over:
+            level, spacing, gap, speed = get_difficulty(score)
+
             background.update()
             drone.move(gesture)
 
             for pipe in pipes:
-                pipe.move()
+                pipe.move(speed)
 
                 if pipe.collides(drone.rect):
                     game_over = True
@@ -438,11 +458,12 @@ def run_game():
             if pipes[0].x < -PIPE_WIDTH:
                 pipes.pop(0)
 
-            if pipes[-1].x < WIDTH - PIPE_SPACING:
-                pipes.append(Pipe(pipe_frames))
-
+            if pipes[-1].x < WIDTH - spacing:
+                pipes.append(Pipe(pipe_frames, gap))
         # --- Dibujo ---
         background.draw(screen)
+        level_text = font_small.render(f"Dificultad: {level}", True, (255, 150, 0))
+        screen.blit(level_text, (20, 110))
 
         anim_index = int(pygame.time.get_ticks() / 1000 * PIPE_ANIM_FPS)
         for pipe in pipes:
