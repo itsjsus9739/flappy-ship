@@ -294,7 +294,7 @@ class Drone:
         self.x = WIDTH // 4
         self.y = HEIGHT // 2
 
-        sprite_path = os.path.join(BASE_DIR, "flappy.png")
+        sprite_path = os.path.join(BASE_DIR, "ship.jfif")
         try:
             self.image = pygame.image.load(sprite_path).convert_alpha()
             self.image = pygame.transform.scale(self.image, (self.width, self.height))
