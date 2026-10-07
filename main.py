@@ -6,6 +6,7 @@ import random
 import multiprocessing as mproc
 
 import cv2
+import numpy as np
 import pygame
 import mediapipe as mp
 from mediapipe.tasks import python
@@ -43,7 +44,7 @@ MODEL_PATH = os.path.join(BASE_DIR, "models", "pose_landmarker_lite.task")
 # =====================================================================
 #  CONFIGURACIÓN DEL PORTAL
 # =====================================================================
-PORTAL_FIRST_LEVEL = 0           # primer nivel en el que aparece un portal
+PORTAL_FIRST_LEVEL = 10                # primer nivel en el que aparece un portal
 PORTAL_EVERY = 5                       # luego aparece cada N niveles (10, 15, 20, 25...)
 PORTAL_WIDTH, PORTAL_HEIGHT = 100, 180
 
@@ -96,6 +97,22 @@ INVADERS_LIVES = 3
 INVADERS_ARM_TOLERANCE = 0.10          # qué tan cerca de la altura del hombro (0-1)
 INVADERS_ARM_EXTENSION = 1.0           # qué tan separado del cuerpo (en anchos de hombro)
 INVADERS_INVERT_CONTROLS = False       # pon True si se mueve al lado contrario
+
+# =====================================================================
+#  CONFIGURACIÓN DE LA NAVE (tamaño y modelo 3D opcional)
+# =====================================================================
+DRONE_SIZE = (50, 38)      # tamaño (ancho, alto) de la nave; también es su hitbox
+
+# Modelo 3D: .obj (sin instalar nada) o .glb/.gltf/.stl/.ply (requiere: pip install trimesh).
+# Si el archivo no existe, se usa el sprite 2D (ship.jfif) como antes.
+# Prueba y orienta tu modelo con:  python main.py --preview
+SHIP_3D_PATH = os.path.join(BASE_DIR, "ship.obj")
+SHIP_3D_COLOR = (0, 200, 255)          # color base del modelo (no usa texturas)
+SHIP_3D_BASE_ROT = (0, 0, 0)           # rotación (x, y, z) en grados para orientar el modelo
+SHIP_3D_TILT_MAX = 25                  # inclinación máxima (grados) al subir/bajar
+SHIP_3D_TILT_STEP = 3                  # paso de la caché de inclinación (grados)
+SHIP_3D_SUPERSAMPLE = 3                # suavizado de bordes (más = más lento al arrancar)
+SHIP_3D_LIGHT = (0.4, 0.6, 0.7)        # dirección de la luz (x, y, z)
 
 # =====================================================================
 #  CONFIGURACIÓN DEL FONDO
@@ -382,22 +399,155 @@ def get_difficulty(score):
     return level, spacing, gap, speed
 
 
+def _rot_matrix(rx, ry, rz):
+    """Matriz de rotación a partir de ángulos en grados (x, y, z)."""
+    ax, ay, az = np.radians([rx, ry, rz])
+    cx, sx = np.cos(ax), np.sin(ax)
+    cy, sy = np.cos(ay), np.sin(ay)
+    cz, sz = np.cos(az), np.sin(az)
+    rot_x = np.array([[1, 0, 0], [0, cx, -sx], [0, sx, cx]])
+    rot_y = np.array([[cy, 0, sy], [0, 1, 0], [-sy, 0, cy]])
+    rot_z = np.array([[cz, -sz, 0], [sz, cz, 0], [0, 0, 1]])
+    return rot_z @ rot_y @ rot_x
+
+
+def load_mesh(path):
+    """Carga un modelo 3D. Devuelve (vértices Nx3, triángulos Mx3)."""
+    if path.lower().endswith(".obj"):
+        verts, faces = [], []
+        with open(path, encoding="utf-8", errors="ignore") as f:
+            for line in f:
+                if line.startswith("v "):
+                    p = line.split()
+                    verts.append([float(p[1]), float(p[2]), float(p[3])])
+                elif line.startswith("f "):
+                    idx = []
+                    for tok in line.split()[1:]:
+                        i = int(tok.split("/")[0])
+                        idx.append(i - 1 if i > 0 else len(verts) + i)
+                    for k in range(1, len(idx) - 1):      # triangula polígonos
+                        faces.append((idx[0], idx[k], idx[k + 1]))
+        return np.array(verts, dtype=float), np.array(faces, dtype=int)
+
+    try:
+        import trimesh
+    except ImportError:
+        raise RuntimeError("para este formato instala trimesh:  pip install trimesh")
+    mesh = trimesh.load(path, force="mesh")
+    return np.array(mesh.vertices, dtype=float), np.array(mesh.faces, dtype=int)
+
+
+class Ship3D:
+    """Renderizador 3D por software (proyección ortográfica, sombreado plano).
+    Genera superficies de pygame y las guarda en caché por ángulo de inclinación."""
+
+    def __init__(self, path, size, color, base_rot):
+        self.size = size
+        self.color = np.array(color, dtype=float)
+        verts, self.faces = load_mesh(path)
+        if len(verts) == 0 or len(self.faces) == 0:
+            raise RuntimeError("el modelo no tiene geometría")
+        self.verts = verts - (verts.max(axis=0) + verts.min(axis=0)) / 2
+        if len(self.faces) > 5000:
+            print(f"AVISO: el modelo tiene {len(self.faces)} caras; con más de ~5000 "
+                  "el arranque puede tardar. Simplifícalo en Blender (Decimate).")
+        self.cache = {}
+        self.set_base_rot(*base_rot)
+
+    def set_base_rot(self, rx, ry, rz):
+        self.base_rot = (rx, ry, rz)
+        self.base = _rot_matrix(rx, ry, rz)
+        self.cache.clear()
+
+        # Escala fija para que el modelo quepa también inclinado al máximo
+        half_x = half_y = 1e-9
+        for tilt in (-SHIP_3D_TILT_MAX, 0, SHIP_3D_TILT_MAX):
+            v = self.verts @ (_rot_matrix(0, 0, tilt) @ self.base).T
+            half_x = max(half_x, (v[:, 0].max() - v[:, 0].min()) / 2)
+            half_y = max(half_y, (v[:, 1].max() - v[:, 1].min()) / 2)
+        w, h = self.size[0] * SHIP_3D_SUPERSAMPLE, self.size[1] * SHIP_3D_SUPERSAMPLE
+        self.scale = min((w / 2) / half_x, (h / 2) / half_y) * 0.95
+
+    def surface(self, tilt=0.0):
+        step = max(1, SHIP_3D_TILT_STEP)
+        key = int(round(tilt / step)) * step
+        if key not in self.cache:
+            self.cache[key] = self._render(key)
+        return self.cache[key]
+
+    def _render(self, tilt):
+        v = self.verts @ (_rot_matrix(0, 0, tilt) @ self.base).T
+        v = v - (v.max(axis=0) + v.min(axis=0)) / 2
+        tri = v[self.faces]                                   # (F, 3, 3)
+
+        # Normales, orientadas hacia la cámara (iluminación de dos caras)
+        n = np.cross(tri[:, 1] - tri[:, 0], tri[:, 2] - tri[:, 0])
+        length = np.linalg.norm(n, axis=1, keepdims=True)
+        length[length == 0] = 1
+        n = n / length
+        n = n * np.where(n[:, 2:3] < 0, -1, 1)
+
+        light = np.array(SHIP_3D_LIGHT, dtype=float)
+        light /= np.linalg.norm(light)
+        intensity = 0.35 + 0.65 * np.clip(n @ light, 0, 1)
+        colors = np.clip(self.color * intensity[:, None], 0, 255).astype(int).tolist()
+
+        # Algoritmo del pintor: de lo más lejano a lo más cercano
+        order = np.argsort(tri[:, :, 2].mean(axis=1))
+        w, h = self.size[0] * SHIP_3D_SUPERSAMPLE, self.size[1] * SHIP_3D_SUPERSAMPLE
+        sx = (tri[:, :, 0] * self.scale + w / 2).tolist()
+        sy = (-tri[:, :, 1] * self.scale + h / 2).tolist()
+
+        surf = pygame.Surface((w, h), pygame.SRCALPHA)
+        for i in order:
+            pts = [(sx[i][0], sy[i][0]), (sx[i][1], sy[i][1]), (sx[i][2], sy[i][2])]
+            c = tuple(colors[i])
+            pygame.draw.polygon(surf, c, pts)
+            pygame.draw.polygon(surf, c, pts, 1)              # cierra grietas entre caras
+        return pygame.transform.smoothscale(surf, self.size)
+
+
+_SHIP_MODEL = None
+_SHIP_MODEL_TRIED = False
+
+
+def get_ship_model():
+    """Devuelve el modelo 3D de la nave (se carga una sola vez) o None si no hay."""
+    global _SHIP_MODEL, _SHIP_MODEL_TRIED
+    if _SHIP_MODEL_TRIED:
+        return _SHIP_MODEL
+    _SHIP_MODEL_TRIED = True
+    if not SHIP_3D_PATH or not os.path.isfile(SHIP_3D_PATH):
+        return None
+    try:
+        _SHIP_MODEL = Ship3D(SHIP_3D_PATH, DRONE_SIZE, SHIP_3D_COLOR, SHIP_3D_BASE_ROT)
+    except Exception as e:
+        print(f"ADVERTENCIA: no se pudo cargar el modelo 3D '{SHIP_3D_PATH}': {e}")
+    return _SHIP_MODEL
+
+
 class Drone:
     def __init__(self):
-        self.width = 50
-        self.height = 38
+        self.width, self.height = DRONE_SIZE
         self.x = WIDTH // 4
         self.y = HEIGHT // 2
+        self.tilt = 0.0
+        self._last_y = self.y
 
-        sprite_path = os.path.join(BASE_DIR, "ship.jfif")
-        try:
-            self.image = pygame.image.load(sprite_path).convert_alpha()
-            self.image = pygame.transform.scale(self.image, (self.width, self.height))
-        except (FileNotFoundError, pygame.error):
-            print(f"ADVERTENCIA: no se encontró '{sprite_path}'. Usando cuadrado por defecto.")
-            self.image = pygame.Surface((self.width, self.height), pygame.SRCALPHA)
-            pygame.draw.rect(self.image, COLOR_DRONE, (0, 0, self.width, self.height), border_radius=8)
-            pygame.draw.rect(self.image, (255, 255, 255), (0, 0, self.width, self.height), 2, border_radius=8)
+        self.model = get_ship_model()
+        if self.model:
+            # Modelo 3D: esta imagen (sin inclinar) también se usa en Invaders y el final
+            self.image = self.model.surface(0)
+        else:
+            sprite_path = os.path.join(BASE_DIR, "ship.jfif")
+            try:
+                self.image = pygame.image.load(sprite_path).convert_alpha()
+                self.image = pygame.transform.scale(self.image, (self.width, self.height))
+            except (FileNotFoundError, pygame.error):
+                print(f"ADVERTENCIA: no se encontró '{sprite_path}'. Usando cuadrado por defecto.")
+                self.image = pygame.Surface((self.width, self.height), pygame.SRCALPHA)
+                pygame.draw.rect(self.image, COLOR_DRONE, (0, 0, self.width, self.height), border_radius=8)
+                pygame.draw.rect(self.image, (255, 255, 255), (0, 0, self.width, self.height), 2, border_radius=8)
 
         self.rect = self.image.get_rect()
         self.rect.x = self.x
@@ -412,7 +562,16 @@ class Drone:
         self.rect.y = self.y
 
     def draw(self, surface):
-        surface.blit(self.image, self.rect)
+        if self.model:
+            # La nave se inclina según su movimiento vertical (arriba = nariz arriba)
+            dy = self.y - self._last_y
+            self._last_y = self.y
+            target = -dy * SHIP_3D_TILT_MAX / max(1, DRONE_SPEED)
+            target = max(-SHIP_3D_TILT_MAX, min(SHIP_3D_TILT_MAX, target))
+            self.tilt += (target - self.tilt) * 0.3
+            surface.blit(self.model.surface(self.tilt), self.rect)
+        else:
+            surface.blit(self.image, self.rect)
 
 
 def build_pipe_surface(frame, height):
@@ -957,6 +1116,62 @@ def run_game():
         clock.tick(FPS)
 
 
+def run_ship_preview():
+    """Vista previa del modelo 3D para encontrar la orientación correcta.
+    Flechas: rotar X/Y | A y D: rotar Z | Q o Esc: salir."""
+    pygame.init()
+    screen = pygame.display.set_mode((WIDTH, HEIGHT))
+    pygame.display.set_caption("Vista previa de la nave 3D")
+    clock = pygame.time.Clock()
+    font = pygame.font.SysFont("Arial", 24)
+
+    if not os.path.isfile(SHIP_3D_PATH):
+        print(f"No se encontró el modelo: {SHIP_3D_PATH}")
+        return
+    model = Ship3D(SHIP_3D_PATH, (480, 360), SHIP_3D_COLOR, SHIP_3D_BASE_ROT)
+    rx, ry, rz = SHIP_3D_BASE_ROT
+
+    running = True
+    while running:
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                running = False
+            if event.type == pygame.KEYDOWN:
+                if event.key in (pygame.K_q, pygame.K_ESCAPE):
+                    running = False
+                elif event.key == pygame.K_UP:
+                    rx += 15
+                elif event.key == pygame.K_DOWN:
+                    rx -= 15
+                elif event.key == pygame.K_RIGHT:
+                    ry += 15
+                elif event.key == pygame.K_LEFT:
+                    ry -= 15
+                elif event.key == pygame.K_a:
+                    rz += 15
+                elif event.key == pygame.K_d:
+                    rz -= 15
+                model.set_base_rot(rx, ry, rz)
+
+        screen.fill((20, 24, 40))
+        img = model.surface(0)
+        screen.blit(img, img.get_rect(center=(WIDTH // 2, HEIGHT // 2 - 30)))
+        lines = [f"SHIP_3D_BASE_ROT = ({rx}, {ry}, {rz})",
+                 "La nariz debe apuntar a la DERECHA de la pantalla",
+                 "Flechas: rotar X/Y   A/D: rotar Z   Q: salir"]
+        for i, t in enumerate(lines):
+            color = (255, 255, 0) if i == 0 else (255, 255, 255)
+            screen.blit(font.render(t, True, color), (20, HEIGHT - 100 + i * 28))
+        pygame.display.flip()
+        clock.tick(30)
+
+    print(f"SHIP_3D_BASE_ROT = ({rx}, {ry}, {rz})")
+    pygame.quit()
+
+
 if __name__ == "__main__":
     mproc.freeze_support()  # necesario en Windows / ejecutables empaquetados
-    run_game()
+    if "--preview" in sys.argv:
+        run_ship_preview()
+    else:
+        run_game()
