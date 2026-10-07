@@ -44,7 +44,7 @@ MODEL_PATH = os.path.join(BASE_DIR, "models", "pose_landmarker_lite.task")
 # =====================================================================
 #  CONFIGURACIÓN DEL PORTAL
 # =====================================================================
-PORTAL_FIRST_LEVEL = 10                # primer nivel en el que aparece un portal
+PORTAL_FIRST_LEVEL = 0               # primer nivel en el que aparece un portal
 PORTAL_EVERY = 5                       # luego aparece cada N niveles (10, 15, 20, 25...)
 PORTAL_WIDTH, PORTAL_HEIGHT = 100, 180
 
