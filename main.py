@@ -41,6 +41,63 @@ CAMERA_INDEX = 0
 MODEL_PATH = os.path.join(BASE_DIR, "models", "pose_landmarker_lite.task")
 
 # =====================================================================
+#  CONFIGURACIÓN DEL PORTAL
+# =====================================================================
+PORTAL_FIRST_LEVEL = 0           # primer nivel en el que aparece un portal
+PORTAL_EVERY = 5                       # luego aparece cada N niveles (10, 15, 20, 25...)
+PORTAL_WIDTH, PORTAL_HEIGHT = 100, 180
+
+# =====================================================================
+#  CONFIGURACIÓN DE LA PANTALLA FINAL (nave llegando al planeta)
+# =====================================================================
+ENDING_FRAMES = 210                    # duración de la animación (210 = ~7 s a 30 FPS)
+ENDING_PLANET_RADIUS = 200             # tamaño final del planeta
+
+# =====================================================================
+#  CONFIGURACIÓN DE SPACE INVADERS
+# =====================================================================
+# --- Enemigos ---
+# SPRITE_PATH puede ser: un archivo (png/jpg), una CARPETA con frames
+# (invader_0.png, invader_1.png, ...) o un spritesheet horizontal
+# (en ese caso indica cuántos frames tiene en INVADER_SHEET_FRAMES).
+# Si no existe, se dibuja un enemigo verde simple.
+INVADER_SPRITE_PATH = os.path.join(BASE_DIR, "invader.png")
+INVADER_SHEET_FRAMES = 1
+INVADER_ANIM_FPS = 6                   # velocidad de la animación del enemigo
+INVADER_SIZE = (40, 30)                # tamaño (ancho, alto) de cada enemigo
+INVADERS_ROWS, INVADERS_COLS = 4, 8
+INVADERS_SPACING = (20, 15)            # separación horizontal y vertical entre enemigos
+# OJO: INVADERS_COLS * (ancho + separación) debe ser menor a ~760 px
+
+# --- Proyectiles (mismas opciones de sprite que los enemigos) ---
+BULLET_ANIM_FPS = 10                   # velocidad de animación de los proyectiles
+
+PLAYER_BULLET_SPRITE_PATH = os.path.join(BASE_DIR, "bullet_player.png")
+PLAYER_BULLET_SHEET_FRAMES = 1
+PLAYER_BULLET_SIZE = (6, 18)           # tamaño (ancho, alto) del proyectil del jugador
+PLAYER_BULLET_COLOR = (0, 255, 255)    # color si no hay sprite
+
+ENEMY_BULLET_SPRITE_PATH = os.path.join(BASE_DIR, "bullet_enemy.png")
+ENEMY_BULLET_SHEET_FRAMES = 1
+ENEMY_BULLET_SIZE = (6, 18)            # tamaño (ancho, alto) del proyectil enemigo
+ENEMY_BULLET_COLOR = (255, 80, 80)     # color si no hay sprite
+ENEMY_BULLET_FLIP_Y = False            # True si tu sprite apunta hacia arriba y debe caer boca abajo
+
+INVADERS_ENEMY_SPEED = 2               # velocidad horizontal inicial de los enemigos
+INVADERS_DROP = 20                     # cuánto bajan al tocar el borde
+INVADERS_PLAYER_SPEED = 10
+INVADERS_FIRE_DELAY = 400              # ms entre disparos automáticos del jugador
+INVADERS_ENEMY_FIRE_DELAY = 900        # ms entre disparos enemigos
+INVADERS_BULLET_SPEED = 14
+INVADERS_ENEMY_BULLET_SPEED = 6
+INVADERS_LIVES = 3
+
+# Gesto: brazo extendido a un lado, a la altura del hombro
+INVADERS_ARM_TOLERANCE = 0.10          # qué tan cerca de la altura del hombro (0-1)
+INVADERS_ARM_EXTENSION = 1.0           # qué tan separado del cuerpo (en anchos de hombro)
+INVADERS_INVERT_CONTROLS = False       # pon True si se mueve al lado contrario
+
+# =====================================================================
 #  CONFIGURACIÓN DEL FONDO
 # =====================================================================
 # Puede ser una CARPETA (varias imágenes, se cambia con la tecla B)
@@ -94,6 +151,10 @@ POSE_CONNECTIONS = [
 
 GESTURE_TO_CODE = {"HOVER": 0, "UP": 1, "DOWN": 2}
 CODE_TO_GESTURE = {v: k for k, v in GESTURE_TO_CODE.items()}
+
+# Gestos del modo Space Invaders
+INV_TO_CODE = {"NONE": 0, "LEFT": 1, "RIGHT": 2}
+CODE_TO_INV = {v: k for k, v in INV_TO_CODE.items()}
 
 IMAGE_EXTS = (".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp")
 
@@ -164,9 +225,34 @@ def get_gesture(lm):
     return "HOVER"
 
 
-def camera_process(gesture_value, stop_event):
+def get_invaders_gesture(lm):
+    """Un brazo extendido a un lado, a la altura del hombro:
+    - brazo en el lado derecho de la imagen (vista espejo) -> RIGHT
+    - brazo en el lado izquierdo de la imagen              -> LEFT
+    Dos brazos extendidos (o ninguno) -> NONE."""
+    needed = [L_SHOULDER, R_SHOULDER, L_WRIST, R_WRIST]
+    if any(lm[i].visibility < 0.5 for i in needed):
+        return "NONE"
+
+    center_x = (lm[L_SHOULDER].x + lm[R_SHOULDER].x) / 2
+    shoulder_y = (lm[L_SHOULDER].y + lm[R_SHOULDER].y) / 2
+    shoulder_w = abs(lm[L_SHOULDER].x - lm[R_SHOULDER].x)
+
+    active = []
+    for wrist in (L_WRIST, R_WRIST):
+        at_shoulder_height = abs(lm[wrist].y - shoulder_y) < INVADERS_ARM_TOLERANCE
+        extended = abs(lm[wrist].x - center_x) > shoulder_w * INVADERS_ARM_EXTENSION
+        if at_shoulder_height and extended:
+            active.append("RIGHT" if lm[wrist].x > center_x else "LEFT")
+
+    if len(active) == 1:
+        return active[0]
+    return "NONE"
+
+
+def camera_process(gesture_value, invaders_value, stop_event):
     """Corre en un proceso aparte: lee la cámara, detecta la pose y
-    publica el gesto en memoria compartida para el juego."""
+    publica los gestos en memoria compartida para el juego."""
     if not os.path.exists(MODEL_PATH):
         print(f"[Cámara] Error: no se encontró el modelo en {MODEL_PATH}")
         return
@@ -213,14 +299,19 @@ def camera_process(gesture_value, stop_event):
             if result.pose_landmarks:
                 pose = result.pose_landmarks[0]
                 gesture = get_gesture(pose)
+                inv_gesture = get_invaders_gesture(pose)
                 draw_pose(frame, pose)
             else:
                 gesture = "HOVER"
+                inv_gesture = "NONE"
 
             gesture_value.value = GESTURE_TO_CODE[gesture]
+            invaders_value.value = INV_TO_CODE[inv_gesture]
 
             cv2.putText(frame, f"Gesto: {gesture}", (10, 35),
                         cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 2)
+            cv2.putText(frame, f"Invaders: {inv_gesture}", (10, 70),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 200, 0), 2)
             cv2.putText(frame, "Q: cerrar camara", (10, frame.shape[0] - 15),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
             cv2.imshow(window_name, frame)
@@ -232,6 +323,7 @@ def camera_process(gesture_value, stop_event):
                 break
 
     gesture_value.value = GESTURE_TO_CODE["HOVER"]
+    invaders_value.value = INV_TO_CODE["NONE"]
     cap.release()
     cv2.destroyAllWindows()
 
@@ -281,12 +373,15 @@ class Background:
             surface.blit(self.image, (x, 0))
             x += w
 
+
 def get_difficulty(score):
     level = max(0, score - DIFFICULTY_START_SCORE) // DIFFICULTY_STEP
     spacing = max(MIN_PIPE_SPACING, PIPE_SPACING - level * SPACING_DECREASE)
     gap = max(MIN_PIPE_GAP, PIPE_GAP - level * GAP_DECREASE)
     speed = min(MAX_PIPE_SPEED, PIPE_SPEED + level * SPEED_INCREASE)
     return level, spacing, gap, speed
+
+
 class Drone:
     def __init__(self):
         self.width = 50
@@ -379,6 +474,344 @@ class Pipe:
             pygame.draw.rect(surface, COLOR_PIPE_BORDER, self.rect_bottom, 3)
 
 
+class Portal:
+    """Portal que aparece cada PORTAL_EVERY niveles desde PORTAL_FIRST_LEVEL.
+    Al tocarlo se entra a Space Invaders."""
+
+    def __init__(self):
+        self.x = WIDTH
+        self.passed = True
+        cy = random.randint(PORTAL_HEIGHT // 2 + 40, HEIGHT - PORTAL_HEIGHT // 2 - 40)
+        self.rect = pygame.Rect(self.x, cy - PORTAL_HEIGHT // 2, PORTAL_WIDTH, PORTAL_HEIGHT)
+
+    def move(self, speed=PIPE_SPEED):
+        self.x -= speed
+        self.rect.x = int(self.x)
+
+    def touches(self, rect):
+        return self.rect.inflate(-30, -30).colliderect(rect)
+
+    def draw(self, surface, frame_index):
+        t = pygame.time.get_ticks() / 1000
+        center = self.rect.center
+
+        # Centro oscuro
+        pygame.draw.ellipse(surface, (15, 0, 40), self.rect)
+
+        # Anillos giratorios
+        colors = [(160, 90, 255), (0, 220, 255)]
+        for i in range(6):
+            s = 1 - i * 0.14
+            ring = pygame.Rect(0, 0, int(self.rect.width * s), int(self.rect.height * s))
+            ring.center = center
+            start = t * (2 + i * 0.5) + i
+            pygame.draw.arc(surface, colors[i % 2], ring, start, start + 3.8, 4)
+
+        pygame.draw.ellipse(surface, (200, 160, 255), self.rect, 3)
+
+
+# =====================================================================
+#  TRANSICIÓN Y MINIJUEGO SPACE INVADERS
+# =====================================================================
+def load_scaled_frames(path, size, sheet_frames=1):
+    """Carga un sprite/animación y lo escala a `size`. Devuelve [] si no existe."""
+    return [pygame.transform.scale(f, size) for f in load_animation(path, sheet_frames)]
+
+
+def pick_frame(frames, now, fps):
+    return frames[int(now / 1000 * fps) % len(frames)]
+
+
+def portal_transition(screen, clock, center):
+    """Círculo que se expande desde el portal y cubre la pantalla."""
+    snapshot = screen.copy()
+    max_r = int((WIDTH ** 2 + HEIGHT ** 2) ** 0.5)
+    for r in range(0, max_r, 40):
+        screen.blit(snapshot, (0, 0))
+        pygame.draw.circle(screen, (120, 60, 255), center, r)
+        pygame.display.flip()
+        pygame.event.pump()
+        clock.tick(FPS)
+
+
+def run_invaders(screen, clock, background, invaders_value, shutdown, player_image, fonts):
+    """Space Invaders controlado con el brazo. Devuelve 'win' o 'lose'."""
+    font_large, font_small = fonts
+    inv_w, inv_h = INVADER_SIZE
+
+    # Sprites (opcionales): enemigo y proyectiles. Si no existen, se dibujan formas simples
+    enemy_frames = load_scaled_frames(INVADER_SPRITE_PATH, INVADER_SIZE, INVADER_SHEET_FRAMES)
+    if not enemy_frames:
+        enemy_img = pygame.Surface(INVADER_SIZE, pygame.SRCALPHA)
+        pygame.draw.ellipse(enemy_img, (120, 255, 120), (0, 0, inv_w, inv_h))
+        pygame.draw.circle(enemy_img, (0, 0, 0), (int(inv_w * 0.3), int(inv_h * 0.45)), 4)
+        pygame.draw.circle(enemy_img, (0, 0, 0), (int(inv_w * 0.7), int(inv_h * 0.45)), 4)
+        enemy_frames = [enemy_img]
+
+    pb_w, pb_h = PLAYER_BULLET_SIZE
+    eb_w, eb_h = ENEMY_BULLET_SIZE
+    player_bullet_frames = load_scaled_frames(
+        PLAYER_BULLET_SPRITE_PATH, PLAYER_BULLET_SIZE, PLAYER_BULLET_SHEET_FRAMES)
+    enemy_bullet_frames = load_scaled_frames(
+        ENEMY_BULLET_SPRITE_PATH, ENEMY_BULLET_SIZE, ENEMY_BULLET_SHEET_FRAMES)
+    if ENEMY_BULLET_FLIP_Y:
+        enemy_bullet_frames = [pygame.transform.flip(f, False, True) for f in enemy_bullet_frames]
+
+    # Enemigos
+    enemies = []
+    gap_x, gap_y = INVADERS_SPACING
+    grid_w = INVADERS_COLS * inv_w + (INVADERS_COLS - 1) * gap_x
+    start_x = (WIDTH - grid_w) // 2
+    for row in range(INVADERS_ROWS):
+        for col in range(INVADERS_COLS):
+            enemies.append(pygame.Rect(start_x + col * (inv_w + gap_x), 60 + row * (inv_h + gap_y), inv_w, inv_h))
+    total_enemies = len(enemies)
+    direction = 1
+    move_acc = 0.0
+
+    # Jugador
+    player = player_image.get_rect(midbottom=(WIDTH // 2, HEIGHT - 20))
+    player_bullets = []
+    enemy_bullets = []
+    lives = INVADERS_LIVES
+    score = 0
+    last_shot = 0
+    last_enemy_shot = pygame.time.get_ticks()
+    invulnerable_until = 0
+
+    state = "playing"
+    end_time = 0
+
+    while True:
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                shutdown()
+            if event.type == pygame.KEYDOWN and event.key == pygame.K_q:
+                shutdown()
+
+        now = pygame.time.get_ticks()
+
+        if state == "playing":
+            # --- Control: brazo (cámara) o flechas (respaldo) ---
+            gesture = CODE_TO_INV.get(invaders_value.value, "NONE")
+            if INVADERS_INVERT_CONTROLS:
+                gesture = {"LEFT": "RIGHT", "RIGHT": "LEFT"}.get(gesture, gesture)
+            keys = pygame.key.get_pressed()
+            if keys[pygame.K_LEFT]:
+                gesture = "LEFT"
+            elif keys[pygame.K_RIGHT]:
+                gesture = "RIGHT"
+
+            if gesture == "LEFT":
+                player.x -= INVADERS_PLAYER_SPEED
+            elif gesture == "RIGHT":
+                player.x += INVADERS_PLAYER_SPEED
+            player.x = max(0, min(WIDTH - player.width, player.x))
+
+            # --- Disparo automático del jugador ---
+            if now - last_shot > INVADERS_FIRE_DELAY:
+                player_bullets.append(pygame.Rect(player.centerx - pb_w // 2, player.top - pb_h, pb_w, pb_h))
+                last_shot = now
+
+            # --- Movimiento de los enemigos ---
+            remaining = len(enemies)
+            speed = INVADERS_ENEMY_SPEED + (1 - remaining / total_enemies) * 3
+            move_acc += speed * direction
+            step = int(move_acc)
+            move_acc -= step
+            if step:
+                left = min(e.left for e in enemies) + step
+                right = max(e.right for e in enemies) + step
+                if left < 10 or right > WIDTH - 10:
+                    direction *= -1
+                    move_acc = 0
+                    for e in enemies:
+                        e.y += INVADERS_DROP
+                else:
+                    for e in enemies:
+                        e.x += step
+
+            # --- Disparo enemigo (desde el enemigo más bajo de una columna) ---
+            if now - last_enemy_shot > INVADERS_ENEMY_FIRE_DELAY:
+                bottom = {}
+                for e in enemies:
+                    if e.x not in bottom or e.y > bottom[e.x].y:
+                        bottom[e.x] = e
+                shooter = random.choice(list(bottom.values()))
+                enemy_bullets.append(pygame.Rect(shooter.centerx - eb_w // 2, shooter.bottom, eb_w, eb_h))
+                last_enemy_shot = now
+
+            # --- Mover balas ---
+            for b in player_bullets:
+                b.y -= INVADERS_BULLET_SPEED
+            for b in enemy_bullets:
+                b.y += INVADERS_ENEMY_BULLET_SPEED
+            player_bullets = [b for b in player_bullets if b.bottom > 0]
+            enemy_bullets = [b for b in enemy_bullets if b.top < HEIGHT]
+
+            # --- Balas del jugador vs enemigos ---
+            for b in player_bullets[:]:
+                hit = next((e for e in enemies if b.colliderect(e)), None)
+                if hit:
+                    enemies.remove(hit)
+                    player_bullets.remove(b)
+                    score += 10
+
+            # --- Balas enemigas vs jugador ---
+            for b in enemy_bullets[:]:
+                if b.colliderect(player) and now > invulnerable_until:
+                    enemy_bullets.remove(b)
+                    lives -= 1
+                    invulnerable_until = now + 1000
+
+            # --- Condiciones de fin ---
+            if not enemies:
+                state = "win"
+                end_time = now
+            elif lives <= 0 or max(e.bottom for e in enemies) >= player.top:
+                state = "lose"
+                end_time = now
+
+        elif now - end_time > 2500:
+            return state
+
+        # --- Dibujo ---
+        background.update()
+        background.draw(screen)
+
+        for e in enemies:
+            screen.blit(pick_frame(enemy_frames, now, INVADER_ANIM_FPS), e)
+        for b in player_bullets:
+            if player_bullet_frames:
+                screen.blit(pick_frame(player_bullet_frames, now, BULLET_ANIM_FPS), b)
+            else:
+                pygame.draw.rect(screen, PLAYER_BULLET_COLOR, b)
+        for b in enemy_bullets:
+            if enemy_bullet_frames:
+                screen.blit(pick_frame(enemy_bullet_frames, now, BULLET_ANIM_FPS), b)
+            else:
+                pygame.draw.rect(screen, ENEMY_BULLET_COLOR, b)
+
+        if now > invulnerable_until or (now // 100) % 2 == 0:
+            screen.blit(player_image, player)
+
+        screen.blit(font_small.render(f"Puntos: {score}", True, COLOR_TEXT), (20, 15))
+        screen.blit(font_small.render(f"Vidas: {lives}", True, (255, 120, 120)), (20, 45))
+        screen.blit(font_small.render(
+            "Brazo derecho/izquierdo extendido a la altura del hombro", True, (255, 255, 0)),
+            (20, HEIGHT - 35))
+
+        if state == "win":
+            text = font_large.render("¡VICTORIA!", True, (120, 255, 120))
+            screen.blit(text, (WIDTH // 2 - text.get_width() // 2, HEIGHT // 2 - 30))
+        elif state == "lose":
+            text = font_large.render("¡PERDISTE!", True, (255, 50, 50))
+            screen.blit(text, (WIDTH // 2 - text.get_width() // 2, HEIGHT // 2 - 30))
+
+        pygame.display.flip()
+        clock.tick(FPS)
+
+
+def make_planet_surface(radius):
+    """Dibuja un planeta (océanos, bandas, continentes y sombra) de radio `radius`."""
+    rng = random.Random(7)
+    size = radius * 2
+    surf = pygame.Surface((size, size), pygame.SRCALPHA)
+    surf.fill((45, 105, 200, 255))
+
+    # Bandas de nubes
+    for i in range(6):
+        y = int(size * (0.08 + i * 0.16))
+        color = (70, 140, 225) if i % 2 else (35, 85, 170)
+        pygame.draw.rect(surf, color, (0, y, size, int(size * 0.06)))
+
+    # Continentes
+    for _ in range(10):
+        cx = rng.randint(int(size * 0.1), int(size * 0.9))
+        cy = rng.randint(int(size * 0.1), int(size * 0.9))
+        r = rng.randint(int(radius * 0.08), int(radius * 0.22))
+        pygame.draw.circle(surf, (70, 175, 110), (cx, cy), r)
+
+    # Sombra en forma de media luna (lado derecho)
+    shade = pygame.Surface((size, size), pygame.SRCALPHA)
+    pygame.draw.circle(shade, (0, 0, 20, 150), (radius, radius), radius)
+    pygame.draw.circle(shade, (0, 0, 0, 0), (int(radius * 0.7), int(radius * 0.85)), radius)
+    surf.blit(shade, (0, 0))
+
+    # Máscara circular para recortar los bordes
+    mask = pygame.Surface((size, size), pygame.SRCALPHA)
+    mask.fill((0, 0, 0, 0))
+    pygame.draw.circle(mask, (255, 255, 255, 255), (radius, radius), radius)
+    surf.blit(mask, (0, 0), special_flags=pygame.BLEND_RGBA_MIN)
+    return surf
+
+
+def run_ending(screen, clock, shutdown, ship_image, fonts):
+    """Pantalla final: la nave llega a un planeta. Termina al pulsar R (reiniciar)."""
+    font_large, font_small = fonts
+    rng = random.Random()
+    stars = [[rng.randint(0, WIDTH), rng.randint(0, HEIGHT), rng.uniform(0.5, 3), rng.randint(1, 2)]
+             for _ in range(90)]
+
+    planet_full = make_planet_surface(ENDING_PLANET_RADIUS)
+    planet_center = (int(WIDTH * 0.68), HEIGHT // 2)
+    ship_w, ship_h = ship_image.get_size()
+
+    frame = 0
+    while True:
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                shutdown()
+            if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_q:
+                    shutdown()
+                if event.key == pygame.K_r and frame >= ENDING_FRAMES:
+                    return
+
+        t = min(1.0, frame / ENDING_FRAMES)
+        ease = t * t * (3 - 2 * t)          # entrada y salida suaves
+
+        # Fondo y estrellas (se frenan al llegar)
+        screen.fill((5, 5, 20))
+        for s in stars:
+            s[0] -= s[2] * (1 - 0.8 * ease)
+            if s[0] < 0:
+                s[0] = WIDTH
+                s[1] = rng.randint(0, HEIGHT)
+            v = min(255, int(120 + 45 * s[2]))
+            pygame.draw.circle(screen, (v, v, v), (int(s[0]), int(s[1])), s[3])
+
+        # Planeta que crece al acercarse
+        radius = max(10, int(50 + (ENDING_PLANET_RADIUS - 50) * ease))
+        glow = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+        for i in range(5):
+            pygame.draw.circle(glow, (110, 170, 255, 12 + i * 12), planet_center, radius + 50 - i * 10)
+        screen.blit(glow, (0, 0))
+        planet = pygame.transform.smoothscale(planet_full, (radius * 2, radius * 2))
+        screen.blit(planet, planet.get_rect(center=planet_center))
+
+        # Nave que se acerca y se hace más pequeña (perspectiva)
+        scale = 1.0 - 0.65 * ease
+        sw, sh = max(4, int(ship_w * scale)), max(4, int(ship_h * scale))
+        ship = pygame.transform.smoothscale(ship_image, (sw, sh))
+        end_x = planet_center[0] - radius * 0.3
+        end_y = planet_center[1] - radius * 0.1
+        ship_x = -60 + (end_x + 60) * ease
+        ship_y = HEIGHT * 0.8 + (end_y - HEIGHT * 0.8) * ease
+        screen.blit(ship, ship.get_rect(center=(int(ship_x), int(ship_y))))
+
+        # Mensaje final
+        if frame >= ENDING_FRAMES:
+            title = font_large.render("¡LLEGASTE A TU DESTINO!", True, (255, 255, 255))
+            sub = font_small.render("Presiona 'R' para jugar de nuevo o 'Q' para salir", True, (255, 255, 0))
+            screen.blit(title, (WIDTH // 2 - title.get_width() // 2, 40))
+            screen.blit(sub, (WIDTH // 2 - sub.get_width() // 2, HEIGHT - 60))
+
+        frame += 1
+        pygame.display.flip()
+        clock.tick(FPS)
+
+
 # =====================================================================
 #  JUEGO (proceso principal)
 # =====================================================================
@@ -393,8 +826,10 @@ def run_game():
 
     # --- Lanzar la cámara en un segundo proceso ---
     gesture_value = mproc.Value("i", 0)
+    invaders_value = mproc.Value("i", 0)
     stop_event = mproc.Event()
-    cam = mproc.Process(target=camera_process, args=(gesture_value, stop_event), daemon=True)
+    cam = mproc.Process(target=camera_process,
+                        args=(gesture_value, invaders_value, stop_event), daemon=True)
     cam.start()
 
     def shutdown():
@@ -413,7 +848,8 @@ def run_game():
     drone = Drone()
     pipes = [Pipe(pipe_frames)]
     score = 0
-    level = 0              # <- aquí
+    level = 0
+    next_portal_level = PORTAL_FIRST_LEVEL
     game_over = False
 
     while True:
@@ -429,6 +865,8 @@ def run_game():
                     drone = Drone()
                     pipes = [Pipe(pipe_frames)]
                     score = 0
+                    level = 0
+                    next_portal_level = PORTAL_FIRST_LEVEL
                     game_over = False
 
         # Gesto de la cámara; las flechas sirven de respaldo/pruebas
@@ -445,8 +883,15 @@ def run_game():
             background.update()
             drone.move(gesture)
 
+            enter_portal = False
             for pipe in pipes:
                 pipe.move(speed)
+
+                # El portal no mata: al tocarlo se entra al minijuego
+                if isinstance(pipe, Portal):
+                    if pipe.touches(drone.rect):
+                        enter_portal = True
+                    continue
 
                 if pipe.collides(drone.rect):
                     game_over = True
@@ -455,11 +900,35 @@ def run_game():
                     score += 1
                     pipe.passed = True
 
-            if pipes[0].x < -PIPE_WIDTH:
+            if enter_portal:
+                portal_transition(screen, clock, drone.rect.center)
+                result = run_invaders(screen, clock, background, invaders_value,
+                                      shutdown, drone.image, (font_large, font_small))
+                if result == "win":
+                    # Ganó Space Invaders: pantalla final y el juego se reinicia con R
+                    run_ending(screen, clock, shutdown, drone.image, (font_large, font_small))
+                    drone = Drone()
+                    pipes = [Pipe(pipe_frames)]
+                    score = 0
+                    level = 0
+                    next_portal_level = PORTAL_FIRST_LEVEL
+                else:
+                    # Perdió: vuelve a Flappy con su puntuación; el siguiente portal
+                    # aparece en el próximo nivel múltiplo de PORTAL_EVERY
+                    drone = Drone()
+                    pipes = [Pipe(pipe_frames, gap)]
+                continue
+
+            if pipes[0].x < -150:
                 pipes.pop(0)
 
             if pipes[-1].x < WIDTH - spacing:
-                pipes.append(Pipe(pipe_frames, gap))
+                if level >= next_portal_level:
+                    pipes.append(Portal())
+                    next_portal_level += PORTAL_EVERY
+                else:
+                    pipes.append(Pipe(pipe_frames, gap))
+
         # --- Dibujo ---
         background.draw(screen)
         level_text = font_small.render(f"Dificultad: {level}", True, (255, 150, 0))
