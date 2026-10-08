@@ -44,7 +44,7 @@ MODEL_PATH = os.path.join(BASE_DIR, "models", "pose_landmarker_lite.task")
 # =====================================================================
 #  CONFIGURACIÓN DEL PORTAL
 # =====================================================================
-PORTAL_FIRST_LEVEL = 0               # primer nivel en el que aparece un portal
+PORTAL_FIRST_LEVEL = 0                 # primer nivel en el que aparece un portal (normal: 10)
 PORTAL_EVERY = 5                       # luego aparece cada N niveles (10, 15, 20, 25...)
 PORTAL_WIDTH, PORTAL_HEIGHT = 100, 180
 
@@ -115,15 +115,22 @@ SHIP_3D_SUPERSAMPLE = 3                # suavizado de bordes (más = más lento 
 SHIP_3D_LIGHT = (0.4, 0.6, 0.7)        # dirección de la luz (x, y, z)
 
 # =====================================================================
-#  CONFIGURACIÓN DEL FONDO
+#  CONFIGURACIÓN DE LOS FONDOS (uno por mundo)
 # =====================================================================
-# Puede ser una CARPETA (varias imágenes, se cambia con la tecla B)
-# o un ARCHIVO de imagen. Si no existe, se usa BACKGROUND_COLOR.
-BACKGROUND_PATH = os.path.join(BASE_DIR, "backgrounds")
-BACKGROUND_COLOR = (20, 24, 40)
-# 0 = fondo estático (la imagen se ajusta a la ventana)
-# > 0 = fondo que se desplaza hacia la izquierda (parallax simple)
-BACKGROUND_SCROLL_SPEED = 2
+# Cada PATH puede ser una CARPETA (varias imágenes; se cambia con la tecla B)
+# o un ARCHIVO de imagen. Si no existe, se usa el COLOR de respaldo.
+# SCROLL_SPEED: 0 = fondo estático (la imagen se ajusta a la ventana)
+#               > 0 = fondo que se desplaza hacia la izquierda
+
+# --- Mundo 1: Flappy ---
+WORLD1_BACKGROUND_PATH = os.path.join(BASE_DIR, "backgrounds")
+WORLD1_BACKGROUND_COLOR = (20, 24, 40)
+WORLD1_BACKGROUND_SCROLL_SPEED = 2
+
+# --- Mundo 2: Space Invaders ---
+WORLD2_BACKGROUND_PATH = os.path.join(BASE_DIR, "backgrounds_world2")
+WORLD2_BACKGROUND_COLOR = (5, 5, 25)
+WORLD2_BACKGROUND_SCROLL_SPEED = 1
 
 # =====================================================================
 #  CONFIGURACIÓN DE LOS TUBOS (los "rectángulos" con los que se choca)
@@ -349,8 +356,10 @@ def camera_process(gesture_value, invaders_value, stop_event):
 #  CLASES DEL JUEGO
 # =====================================================================
 class Background:
-    def __init__(self):
-        self.files = list_images(BACKGROUND_PATH)
+    def __init__(self, path, color, scroll_speed):
+        self.color = color
+        self.scroll_speed = scroll_speed
+        self.files = list_images(path)
         self.index = 0
         self.offset = 0
         self.image = None
@@ -362,7 +371,7 @@ class Background:
             return
         try:
             img = pygame.image.load(self.files[self.index]).convert()
-            if BACKGROUND_SCROLL_SPEED == 0:
+            if self.scroll_speed == 0:
                 self.image = pygame.transform.smoothscale(img, (WIDTH, HEIGHT))
             else:
                 scale = HEIGHT / img.get_height()
@@ -378,14 +387,14 @@ class Background:
             self._load()
 
     def update(self):
-        self.offset += BACKGROUND_SCROLL_SPEED
+        self.offset += self.scroll_speed
 
     def draw(self, surface):
         if self.image is None:
-            surface.fill(BACKGROUND_COLOR)
+            surface.fill(self.color)
             return
         w = self.image.get_width()
-        x = -(self.offset % w) if BACKGROUND_SCROLL_SPEED else 0
+        x = -(self.offset % w) if self.scroll_speed else 0
         while x < WIDTH:
             surface.blit(self.image, (x, 0))
             x += w
@@ -747,6 +756,8 @@ def run_invaders(screen, clock, background, invaders_value, shutdown, player_ima
                 shutdown()
             if event.type == pygame.KEYDOWN and event.key == pygame.K_q:
                 shutdown()
+            if event.type == pygame.KEYDOWN and event.key == pygame.K_b:
+                background.next()
 
         now = pygame.time.get_ticks()
 
@@ -999,7 +1010,10 @@ def run_game():
         pygame.quit()
         sys.exit()
 
-    background = Background()
+    background = Background(WORLD1_BACKGROUND_PATH, WORLD1_BACKGROUND_COLOR,
+                            WORLD1_BACKGROUND_SCROLL_SPEED)
+    invaders_background = Background(WORLD2_BACKGROUND_PATH, WORLD2_BACKGROUND_COLOR,
+                                     WORLD2_BACKGROUND_SCROLL_SPEED)
     pipe_frames = load_animation(PIPE_SPRITES_PATH, PIPE_SHEET_FRAMES)
     if not pipe_frames:
         print("AVISO: no hay sprites de tubos, se usan rectángulos de color.")
@@ -1061,7 +1075,7 @@ def run_game():
 
             if enter_portal:
                 portal_transition(screen, clock, drone.rect.center)
-                result = run_invaders(screen, clock, background, invaders_value,
+                result = run_invaders(screen, clock, invaders_background, invaders_value,
                                       shutdown, drone.image, (font_large, font_small))
                 if result == "win":
                     # Ganó Space Invaders: pantalla final y el juego se reinicia con R
