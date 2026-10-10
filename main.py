@@ -1,5 +1,6 @@
 import os
 import re
+import math
 import sys
 import time
 import random
@@ -141,18 +142,17 @@ PIPE_SPACING = 400         # distancia horizontal entre tubos
 PIPE_MIN_SEGMENT = 100     # altura mínima de cada tubo
 PIPE_HITBOX_PADDING = 0    # >0 hace la colisión más permisiva (en píxeles)
 
-# Sprites: CARPETA con frames (pipe_0.png, pipe_1.png, ...) o ARCHIVO.
-# Si es un solo archivo con varios frames en horizontal (spritesheet),
-# indica cuántos frames tiene en PIPE_SHEET_FRAMES.
+# Tentáculos: PNG con transparencia (tentacle_0.png, tentacle_1.png, ...) en esta carpeta.
+# Se generan con:  python extract_tentacles.py
 PIPE_SPRITES_PATH = os.path.join(BASE_DIR, "pipes")
-PIPE_SHEET_FRAMES = 7
-PIPE_ANIM_FPS = 8          # velocidad de la animación
+TENTACLE_PREFIX = "tentacle_"
 
-# "tile"    = repite el sprite hacia abajo/arriba sin deformarlo
-# "stretch" = estira el sprite para llenar todo el tubo
-PIPE_FILL_MODE = "tile"
-# Voltea verticalmente el tubo de arriba para que quede "boca abajo"
-PIPE_FLIP_TOP = True
+# Animación de vaivén: la base queda fija y una onda recorre el tentáculo hasta la punta.
+PIPE_ANIM_FPS = 25              # velocidad de la animación (frames por segundo)
+TENTACLE_ANIM_FRAMES = 10       # frames por ciclo (más = más suave, pero usa más memoria)
+TENTACLE_SWAY_AMPLITUDE = 20    # cuánto se mueve la punta de lado a lado (px). 0 = sin movimiento
+TENTACLE_SWAY_WAVES = 2       # cuántas "ondas" caben a lo largo del tentáculo
+TENTACLE_SWAY_STRIP = 3         # alto (px) de cada franja al deformar; 3 mantiene el look pixel-art
 
 # Colores de respaldo si no hay sprites
 COLOR_PIPE = (0, 255, 100)
@@ -216,7 +216,12 @@ def load_animation(path, sheet_frames=1):
     frames = []
     for f in files:
         try:
-            frames.append(pygame.image.load(f).convert_alpha())
+            img = pygame.image.load(f).convert_alpha()
+            # --- AÑADE ESTA LÍNEA ---
+            # Reemplaza (65, 65, 65) por el valor RGB exacto del gris de tu imagen.
+            # (Usa el cuentagotas de Paint o cualquier editor para ver el RGB de tu fondo).
+            img.set_colorkey((65, 65, 65))
+            frames.append(img)
         except pygame.error as e:
             print(f"ADVERTENCIA: no se pudo cargar '{f}': {e}")
     return frames
@@ -583,58 +588,106 @@ class Drone:
             surface.blit(self.image, self.rect)
 
 
-def build_pipe_surface(frame, height):
-    """Crea la superficie de un tubo de PIPE_WIDTH x height a partir de un frame."""
-    if PIPE_FILL_MODE == "stretch":
-        return pygame.transform.scale(frame, (PIPE_WIDTH, height))
+class TentacleAnim:
+    """Frames animados de un tentáculo, ya listos para dibujar y para colisionar.
+    `bottom_*`: base abajo y punta hacia arriba. `top_*`: lo mismo pero invertido."""
 
-    # modo "tile": se repite el sprite sin deformarlo
-    surf = pygame.Surface((PIPE_WIDTH, height), pygame.SRCALPHA)
-    scale = PIPE_WIDTH / frame.get_width()
-    tile_h = max(1, int(frame.get_height() * scale))
-    tile = pygame.transform.scale(frame, (PIPE_WIDTH, tile_h))
-    y = 0
-    while y < height:
-        surf.blit(tile, (0, y))
-        y += tile_h
-    return surf
+    def __init__(self, sprite):
+        w, h = sprite.get_size()
+        n = max(1, TENTACLE_ANIM_FRAMES) if TENTACLE_SWAY_AMPLITUDE > 0 else 1
+        pad = int(TENTACLE_SWAY_AMPLITUDE) + 1
+        self.bottom, self.top = [], []
+        for f in range(n):
+            frame = pygame.Surface((w + 2 * pad, h), pygame.SRCALPHA)
+            for y0 in range(0, h, TENTACLE_SWAY_STRIP):
+                sh = min(TENTACLE_SWAY_STRIP, h - y0)
+                u = 1 - (y0 + sh / 2) / h                  # 0 en la base, 1 en la punta
+                phase = 2 * math.pi * (f / n - TENTACLE_SWAY_WAVES * u)
+                dx = round(TENTACLE_SWAY_AMPLITUDE * (u ** 1.5) * math.sin(phase))
+                frame.blit(sprite, (pad + dx, y0), (0, y0, w, sh))
+            self.bottom.append(frame)
+            self.top.append(pygame.transform.flip(frame, False, True))
+        self.bottom_masks = [pygame.mask.from_surface(f) for f in self.bottom]
+        self.top_masks = [pygame.mask.from_surface(f) for f in self.top]
+        self.n = n
+
+
+def load_tentacles(path):
+    """Carga los sprites tentacle_*.png (con transparencia) y pre-genera su animación."""
+    anims = []
+    for f in list_images(path):
+        if not os.path.basename(f).lower().startswith(TENTACLE_PREFIX):
+            continue
+        try:
+            anims.append(TentacleAnim(pygame.image.load(f).convert_alpha()))
+        except pygame.error as e:
+            print(f"ADVERTENCIA: no se pudo cargar '{f}': {e}")
+    return anims
 
 
 class Pipe:
+    """Par de tentáculos (arriba y abajo). La punta de cada uno marca el borde del hueco
+    y la base sale por el borde de la pantalla. La colisión usa la forma real del frame actual."""
+
     def __init__(self, frames, gap=PIPE_GAP):
         self.x = WIDTH
         self.passed = False
         self.bottom_height = random.randint(PIPE_MIN_SEGMENT, HEIGHT - gap - PIPE_MIN_SEGMENT)
         self.top_height = HEIGHT - gap - self.bottom_height
 
+        # Rectángulos de respaldo (solo se usan si no hay sprites)
         self.rect_top = pygame.Rect(self.x, 0, PIPE_WIDTH, self.top_height)
         self.rect_bottom = pygame.Rect(self.x, HEIGHT - self.bottom_height, PIPE_WIDTH, self.bottom_height)
 
-        # Se pre-generan las superficies de cada frame de animación
-        self.top_surfaces = []
-        self.bottom_surfaces = []
-        for f in frames:
-            self.bottom_surfaces.append(build_pipe_surface(f, self.bottom_height))
-            top = build_pipe_surface(f, self.top_height)
-            if PIPE_FLIP_TOP:
-                top = pygame.transform.flip(top, False, True)
-            self.top_surfaces.append(top)
+        self.bottom_anim = self.top_anim = None
+        self.anim_t = 0.0
+        if frames:
+            # Dos tentáculos distintos cuando se puede
+            self.bottom_anim, self.top_anim = (random.sample(frames, 2) if len(frames) >= 2
+                                               else (frames[0], frames[0]))
+            # Desfase aleatorio para que no se muevan todos al mismo tiempo
+            self.bottom_offset = random.randrange(self.bottom_anim.n)
+            self.top_offset = random.randrange(self.top_anim.n)
+        self._update_positions()
+
+    def _bottom_index(self):
+        return (int(self.anim_t) + self.bottom_offset) % self.bottom_anim.n
+
+    def _top_index(self):
+        return (int(self.anim_t) + self.top_offset) % self.top_anim.n
+
+    def _update_positions(self):
+        self.rect_top.x = int(self.x)
+        self.rect_bottom.x = int(self.x)
+        if self.bottom_anim:
+            b = self.bottom_anim.bottom[0]
+            t = self.top_anim.top[0]
+            cx = self.x + PIPE_WIDTH / 2          # los tentáculos se centran en la columna
+            self.bottom_pos = (int(cx - b.get_width() / 2), HEIGHT - self.bottom_height)
+            self.top_pos = (int(cx - t.get_width() / 2), self.top_height - t.get_height())
 
     def move(self, speed=PIPE_SPEED):
         self.x -= speed
-        self.rect_top.x = int(self.x)
-        self.rect_bottom.x = int(self.x)
+        self.anim_t += PIPE_ANIM_FPS / FPS         # la animación avanza con el juego
+        self._update_positions()
 
     def collides(self, rect):
         pad = PIPE_HITBOX_PADDING * 2
-        return (rect.colliderect(self.rect_top.inflate(-pad, -pad)) or
-                rect.colliderect(self.rect_bottom.inflate(-pad, -pad)))
+        if not self.bottom_anim:
+            return (rect.colliderect(self.rect_top.inflate(-pad, -pad)) or
+                    rect.colliderect(self.rect_bottom.inflate(-pad, -pad)))
+        r = rect.inflate(-pad, -pad)
+        probe = pygame.Mask(r.size, fill=True)
+        for mask, pos in ((self.top_anim.top_masks[self._top_index()], self.top_pos),
+                          (self.bottom_anim.bottom_masks[self._bottom_index()], self.bottom_pos)):
+            if mask.overlap(probe, (r.x - pos[0], r.y - pos[1])):
+                return True
+        return False
 
-    def draw(self, surface, frame_index):
-        if self.bottom_surfaces:
-            i = frame_index % len(self.bottom_surfaces)
-            surface.blit(self.top_surfaces[i], self.rect_top.topleft)
-            surface.blit(self.bottom_surfaces[i], self.rect_bottom.topleft)
+    def draw(self, surface, frame_index=0):
+        if self.bottom_anim:
+            surface.blit(self.top_anim.top[self._top_index()], self.top_pos)
+            surface.blit(self.bottom_anim.bottom[self._bottom_index()], self.bottom_pos)
         else:
             pygame.draw.rect(surface, COLOR_PIPE, self.rect_top)
             pygame.draw.rect(surface, COLOR_PIPE, self.rect_bottom)
@@ -659,7 +712,7 @@ class Portal:
     def touches(self, rect):
         return self.rect.inflate(-30, -30).colliderect(rect)
 
-    def draw(self, surface, frame_index):
+    def draw(self, surface, frame_index=0):
         t = pygame.time.get_ticks() / 1000
         center = self.rect.center
 
@@ -1014,9 +1067,9 @@ def run_game():
                             WORLD1_BACKGROUND_SCROLL_SPEED)
     invaders_background = Background(WORLD2_BACKGROUND_PATH, WORLD2_BACKGROUND_COLOR,
                                      WORLD2_BACKGROUND_SCROLL_SPEED)
-    pipe_frames = load_animation(PIPE_SPRITES_PATH, PIPE_SHEET_FRAMES)
+    pipe_frames = load_tentacles(PIPE_SPRITES_PATH)
     if not pipe_frames:
-        print("AVISO: no hay sprites de tubos, se usan rectángulos de color.")
+        print("AVISO: no hay sprites tentacle_*.png en 'pipes/', se usan rectángulos de color.")
 
     drone = Drone()
     pipes = [Pipe(pipe_frames)]
@@ -1107,9 +1160,8 @@ def run_game():
         level_text = font_small.render(f"Dificultad: {level}", True, (255, 150, 0))
         screen.blit(level_text, (20, 110))
 
-        anim_index = int(pygame.time.get_ticks() / 1000 * PIPE_ANIM_FPS)
         for pipe in pipes:
-            pipe.draw(screen, anim_index)
+            pipe.draw(screen)
 
         drone.draw(screen)
 
