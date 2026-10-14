@@ -42,6 +42,18 @@ MAX_PIPE_SPEED = 10          # límite máximo de velocidad
 CAMERA_INDEX = 0
 MODEL_PATH = os.path.join(BASE_DIR, "models", "pose_landmarker_lite.task")
 
+
+# =====================================================================
+#  CONFIGURACIÓN DE LA MÚSICA
+# =====================================================================
+# Pon tu archivo junto a main.py (o cambia el nombre aquí). Acepta .mp3, .ogg y .wav.
+MUSIC_PATH = os.path.join(BASE_DIR, "mi_cancion.mp3")      # <- esta línea
+MUSIC_VOLUME = 0.5
+MUSIC_VOLUME_STEP = 0.05
+MUSIC_VOLUME = 0.5                      # volumen inicial (0.0 a 1.0)
+MUSIC_VOLUME_STEP = 0.05                # cuánto cambia con cada pulsación de + / -
+# Teclas en el juego:  +  sube el volumen  |  -  lo baja  |  M  silencia / reactiva
+
 # =====================================================================
 #  CONFIGURACIÓN DEL PORTAL
 # =====================================================================
@@ -358,6 +370,74 @@ def camera_process(gesture_value, invaders_value, stop_event):
 
 
 # =====================================================================
+#  MÚSICA
+# =====================================================================
+class MusicPlayer:
+    """Música de fondo en bucle con control de volumen (+ / -) y silencio (M)."""
+    def __init__(self):
+        self.enabled = False
+        self.volume = max(0.0, min(1.0, MUSIC_VOLUME))
+        self.muted = False
+        self.hud_until = 0
+
+    def start(self):
+        """Inicia la música. Llamar después de pygame.init()."""
+        
+        if not MUSIC_PATH or not os.path.isfile(MUSIC_PATH):
+            print(f"AVISO: no se encontró la música '{MUSIC_PATH}'. El juego seguirá sin música.")
+            return
+        try:
+            pygame.mixer.init()
+            pygame.mixer.music.load(MUSIC_PATH)
+            pygame.mixer.music.set_volume(self.volume)
+            pygame.mixer.music.play(-1)                      # -1 = en bucle
+            self.enabled = True
+        except pygame.error as e:
+            print(f"ADVERTENCIA: no se pudo reproducir la música: {e}")
+
+    def _apply(self):
+        pygame.mixer.music.set_volume(0.0 if self.muted else self.volume)
+        self.hud_until = pygame.time.get_ticks() + 1500      # muestra el indicador 1.5 s
+
+    def change_volume(self, delta):
+        self.volume = max(0.0, min(1.0, round(self.volume + delta, 2)))
+        if delta > 0:
+            self.muted = False                               # subir el volumen quita el silencio
+        self._apply()
+
+    def toggle_mute(self):
+        self.muted = not self.muted
+        self._apply()
+
+    def handle_event(self, event):
+        if not self.enabled or event.type != pygame.KEYDOWN:
+            return
+        if event.key in (pygame.K_PLUS, pygame.K_KP_PLUS, pygame.K_EQUALS):
+            self.change_volume(MUSIC_VOLUME_STEP)
+        elif event.key in (pygame.K_MINUS, pygame.K_KP_MINUS):
+            self.change_volume(-MUSIC_VOLUME_STEP)
+        elif event.key == pygame.K_m:
+            self.toggle_mute()
+
+    def draw(self, surface, font):
+        """Indicador de volumen arriba a la derecha (aparece unos segundos al cambiarlo)."""
+        if not self.enabled or pygame.time.get_ticks() > self.hud_until:
+            return
+        label = "Música: silenciada" if self.muted else f"Volumen: {round(self.volume * 100)}%"
+        text = font.render(label, True, COLOR_TEXT)
+        x = WIDTH - text.get_width() - 20
+        surface.blit(text, (x, 15))
+        bar = pygame.Rect(x, 15 + text.get_height() + 4, text.get_width(), 8)
+        pygame.draw.rect(surface, (60, 60, 80), bar)
+        fill = 0 if self.muted else int(bar.width * self.volume)
+        pygame.draw.rect(surface, (255, 200, 0), (bar.x, bar.y, fill, bar.height))
+        pygame.draw.rect(surface, COLOR_TEXT, bar, 1)
+
+
+music = MusicPlayer()
+
+
+# =====================================================================
 #  CLASES DEL JUEGO
 # =====================================================================
 class Background:
@@ -413,6 +493,13 @@ def get_difficulty(score):
     return level, spacing, gap, speed
 
 
+# ---- Opciones de materiales del modelo 3D ----
+SHIP_3D_USE_MATERIALS = True      # True: usa los colores/texturas que traiga el modelo
+SHIP_3D_LINEAR_TO_SRGB = True     # Blender guarda los colores en lineal; True los corrige para
+                                  # que se vean como en Blender (pon False si salen muy claros)
+SHIP_3D_AMBIENT = 0.40            # luz ambiente (0-1): sube si el modelo se ve oscuro
+
+
 def _rot_matrix(rx, ry, rz):
     """Matriz de rotación a partir de ángulos en grados (x, y, z)."""
     ax, ay, az = np.radians([rx, ry, rz])
@@ -425,46 +512,210 @@ def _rot_matrix(rx, ry, rz):
     return rot_z @ rot_y @ rot_x
 
 
-def load_mesh(path):
-    """Carga un modelo 3D. Devuelve (vértices Nx3, triángulos Mx3)."""
-    if path.lower().endswith(".obj"):
-        verts, faces = [], []
-        with open(path, encoding="utf-8", errors="ignore") as f:
-            for line in f:
-                if line.startswith("v "):
-                    p = line.split()
-                    verts.append([float(p[1]), float(p[2]), float(p[3])])
-                elif line.startswith("f "):
-                    idx = []
-                    for tok in line.split()[1:]:
-                        i = int(tok.split("/")[0])
-                        idx.append(i - 1 if i > 0 else len(verts) + i)
-                    for k in range(1, len(idx) - 1):      # triangula polígonos
-                        faces.append((idx[0], idx[k], idx[k + 1]))
-        return np.array(verts, dtype=float), np.array(faces, dtype=int)
+def _kd_to_rgb(kd):
+    """Color difuso del .mtl (0-1) -> RGB 0-255."""
+    c = np.clip(np.array(kd, dtype=float), 0, 1)
+    if SHIP_3D_LINEAR_TO_SRGB:
+        c = np.where(c <= 0.0031308, c * 12.92, 1.055 * np.power(c, 1 / 2.4) - 0.055)
+    return c * 255
 
+
+def _load_texture(value, base_dir):
+    """Carga la textura de un 'map_Kd' como arreglo (alto, ancho, 3). None si falla."""
+    value = value.strip()
+    names = [value, value.split()[-1]] if value else []
+    for name in names:
+        name = name.replace("\\", "/")
+        for candidate in (os.path.join(base_dir, name), os.path.join(base_dir, os.path.basename(name))):
+            if os.path.isfile(candidate):
+                try:
+                    surf = pygame.image.load(candidate)
+                    return np.transpose(pygame.surfarray.array3d(surf), (1, 0, 2)).astype(float)
+                except pygame.error as e:
+                    print(f"ADVERTENCIA: no se pudo leer la textura '{candidate}': {e}")
+                    return None
+    print(f"ADVERTENCIA: no se encontró la textura '{value}' (ponla junto al .obj)")
+    return None
+
+
+def _parse_mtl(mtl_path):
+    """Lee un .mtl. Devuelve {nombre: {'kd': (r,g,b) 0-1 o None, 'texture': arreglo o None}}."""
+    materials, current = {}, None
+    base_dir = os.path.dirname(mtl_path)
+    with open(mtl_path, encoding="utf-8", errors="ignore") as f:
+        for raw in f:
+            line = raw.strip()
+            if not line or line.startswith("#"):
+                continue
+            parts = line.split(None, 1)
+            key, val = parts[0].lower(), (parts[1] if len(parts) > 1 else "")
+            if key == "newmtl":
+                current = {"kd": None, "texture": None}
+                materials[val.strip()] = current
+            elif current is None:
+                continue
+            elif key == "kd":
+                nums = [float(x) for x in val.split()[:3]]
+                if len(nums) == 3:
+                    current["kd"] = tuple(nums)
+            elif key == "map_kd":
+                current["texture"] = _load_texture(val, base_dir)
+    return materials
+
+
+def _sample_texture(tex, uv):
+    """Color promedio de cada cara: 4 muestras de la textura dentro del triángulo.
+    uv: (k, 3, 2) -> devuelve (k, 3) en RGB 0-255."""
+    weights = np.array([[1 / 3, 1 / 3, 1 / 3], [0.6, 0.2, 0.2], [0.2, 0.6, 0.2], [0.2, 0.2, 0.6]])
+    pts = np.einsum("pv,kvc->kpc", weights, uv)               # (k, 4, 2)
+    h, w = tex.shape[:2]
+    x = ((pts[..., 0] % 1.0) * (w - 1)).astype(int)
+    y = ((1 - (pts[..., 1] % 1.0)) * (h - 1)).astype(int)
+    return tex[y, x].mean(axis=1)
+
+
+def _load_obj(path):
+    base_dir = os.path.dirname(path)
+    verts, vcols, uvs = [], [], []
+    tris, tri_uv, tri_mat = [], [], []
+    materials, current_mat = {}, ""
+
+    with open(path, encoding="utf-8", errors="ignore") as f:
+        for line in f:
+            if line.startswith("v "):
+                p = line.split()
+                verts.append([float(p[1]), float(p[2]), float(p[3])])
+                if len(p) >= 7:                                # color por vértice (opcional)
+                    vcols.append([float(p[4]), float(p[5]), float(p[6])])
+            elif line.startswith("vt "):
+                p = line.split()
+                uvs.append([float(p[1]), float(p[2])])
+            elif line.startswith("mtllib"):
+                mtl_path = os.path.join(base_dir, line[6:].strip().replace("\\", "/"))
+                if os.path.isfile(mtl_path):
+                    materials.update(_parse_mtl(mtl_path))
+                else:
+                    print(f"ADVERTENCIA: no se encontró '{os.path.basename(mtl_path)}' "
+                          "(ponlo junto al .obj para conservar los materiales)")
+            elif line.startswith("usemtl"):
+                current_mat = line[6:].strip()
+            elif line.startswith("f "):
+                idx, uv_idx = [], []
+                for tok in line.split()[1:]:
+                    parts = tok.split("/")
+                    i = int(parts[0])
+                    idx.append(i - 1 if i > 0 else len(verts) + i)
+                    if len(parts) > 1 and parts[1]:
+                        t = int(parts[1])
+                        uv_idx.append(t - 1 if t > 0 else len(uvs) + t)
+                    else:
+                        uv_idx.append(-1)
+                for k in range(1, len(idx) - 1):               # triangula polígonos
+                    tris.append((idx[0], idx[k], idx[k + 1]))
+                    tri_uv.append((uv_idx[0], uv_idx[k], uv_idx[k + 1]))
+                    tri_mat.append(current_mat)
+
+    verts = np.array(verts, dtype=float)
+    faces = np.array(tris, dtype=int)
+    if len(faces) == 0:
+        return verts, faces, None
+
+    colors = np.full((len(faces), 3), np.nan)                  # NaN = usar SHIP_3D_COLOR
+    tri_mat = np.array(tri_mat, dtype=object)
+    tri_uv = np.array(tri_uv, dtype=int)
+
+    # 1) Color difuso (Kd) de cada material
+    for name, mat in materials.items():
+        sel = np.where(tri_mat == name)[0]
+        if len(sel) and mat["kd"] is not None:
+            colors[sel] = _kd_to_rgb(mat["kd"])
+
+    # 2) Colores por vértice, si el archivo los trae
+    if len(vcols) == len(verts) and len(vcols):
+        colors[:] = np.array(vcols)[faces].mean(axis=1) * 255
+
+    # 3) Texturas (map_Kd): color promedio por cara según sus coordenadas UV
+    if uvs:
+        uv_arr = np.array(uvs, dtype=float)
+        for name, mat in materials.items():
+            if mat["texture"] is None:
+                continue
+            sel = np.where(tri_mat == name)[0]
+            sel = sel[(tri_uv[sel] >= 0).all(axis=1) & (tri_uv[sel] < len(uv_arr)).all(axis=1)]
+            if len(sel):
+                colors[sel] = _sample_texture(mat["texture"], uv_arr[tri_uv[sel]])
+
+    return verts, faces, (None if np.isnan(colors).all() else colors)
+
+
+def _load_with_trimesh(path):
+    """Formatos .glb/.gltf/.stl/.ply (requiere trimesh). Conserva colores y texturas base."""
     try:
         import trimesh
     except ImportError:
         raise RuntimeError("para este formato instala trimesh:  pip install trimesh")
-    mesh = trimesh.load(path, force="mesh")
-    return np.array(mesh.vertices, dtype=float), np.array(mesh.faces, dtype=int)
+
+    loaded = trimesh.load(path)
+    if isinstance(loaded, trimesh.Scene):
+        geoms = [g for g in loaded.dump() if hasattr(g, "faces")]   # con sus transformaciones
+    else:
+        geoms = [loaded]
+
+    all_v, all_f, all_c = [], [], []
+    offset = 0
+    for g in geoms:
+        v = np.asarray(g.vertices, dtype=float)
+        f = np.asarray(g.faces, dtype=int)
+        c = np.full((len(f), 3), np.nan)
+        try:
+            vis = g.visual
+            if getattr(vis, "kind", None) == "texture":
+                vis = vis.to_color()                                # textura -> colores
+            if getattr(vis, "defined", False):
+                c = np.asarray(vis.face_colors)[:, :3].astype(float)
+        except Exception as e:
+            print(f"ADVERTENCIA: no se pudieron leer los colores de una pieza: {e}")
+        all_v.append(v)
+        all_f.append(f + offset)
+        all_c.append(c)
+        offset += len(v)
+
+    colors = np.vstack(all_c)
+    return np.vstack(all_v), np.vstack(all_f), (None if np.isnan(colors).all() else colors)
+
+
+def load_mesh(path):
+    """Carga un modelo 3D. Devuelve (vértices Nx3, triángulos Mx3, colores por cara Mx3 o None)."""
+    if path.lower().endswith(".obj"):
+        return _load_obj(path)
+    return _load_with_trimesh(path)
 
 
 class Ship3D:
     """Renderizador 3D por software (proyección ortográfica, sombreado plano).
-    Genera superficies de pygame y las guarda en caché por ángulo de inclinación."""
+    Genera superficies de pygame y las guarda en caché por ángulo de inclinación.
+    Usa los colores de los materiales del modelo si los tiene (SHIP_3D_USE_MATERIALS)."""
 
     def __init__(self, path, size, color, base_rot):
         self.size = size
         self.color = np.array(color, dtype=float)
-        verts, self.faces = load_mesh(path)
+        verts, self.faces, face_colors = load_mesh(path)
         if len(verts) == 0 or len(self.faces) == 0:
             raise RuntimeError("el modelo no tiene geometría")
         self.verts = verts - (verts.max(axis=0) + verts.min(axis=0)) / 2
         if len(self.faces) > 5000:
             print(f"AVISO: el modelo tiene {len(self.faces)} caras; con más de ~5000 "
                   "el arranque puede tardar. Simplifícalo en Blender (Decimate).")
+
+        # Colores por cara: los del material, o SHIP_3D_COLOR donde no haya
+        self.face_colors = None
+        if SHIP_3D_USE_MATERIALS and face_colors is not None:
+            fc = face_colors.copy()
+            fc[np.isnan(fc).any(axis=1)] = self.color
+            self.face_colors = fc
+        origen = "materiales del modelo" if self.face_colors is not None else "color único (SHIP_3D_COLOR)"
+        print(f"[Nave 3D] {len(self.faces)} caras | colores: {origen}")
+
         self.cache = {}
         self.set_base_rot(*base_rot)
 
@@ -503,8 +754,9 @@ class Ship3D:
 
         light = np.array(SHIP_3D_LIGHT, dtype=float)
         light /= np.linalg.norm(light)
-        intensity = 0.35 + 0.65 * np.clip(n @ light, 0, 1)
-        colors = np.clip(self.color * intensity[:, None], 0, 255).astype(int).tolist()
+        intensity = SHIP_3D_AMBIENT + (1 - SHIP_3D_AMBIENT) * np.clip(n @ light, 0, 1)
+        base = self.face_colors if self.face_colors is not None else self.color
+        colors = np.clip(base * intensity[:, None], 0, 255).astype(int).tolist()
 
         # Algoritmo del pintor: de lo más lejano a lo más cercano
         order = np.argsort(tri[:, :, 2].mean(axis=1))
@@ -811,6 +1063,7 @@ def run_invaders(screen, clock, background, invaders_value, shutdown, player_ima
                 shutdown()
             if event.type == pygame.KEYDOWN and event.key == pygame.K_b:
                 background.next()
+            music.handle_event(event)
 
         now = pygame.time.get_ticks()
 
@@ -931,6 +1184,7 @@ def run_invaders(screen, clock, background, invaders_value, shutdown, player_ima
             text = font_large.render("¡PERDISTE!", True, (255, 50, 50))
             screen.blit(text, (WIDTH // 2 - text.get_width() // 2, HEIGHT // 2 - 30))
 
+        music.draw(screen, font_small)
         pygame.display.flip()
         clock.tick(FPS)
 
@@ -983,6 +1237,7 @@ def run_ending(screen, clock, shutdown, ship_image, fonts):
     frame = 0
     while True:
         for event in pygame.event.get():
+            music.handle_event(event)
             if event.type == pygame.QUIT:
                 shutdown()
             if event.type == pygame.KEYDOWN:
@@ -1030,6 +1285,7 @@ def run_ending(screen, clock, shutdown, ship_image, fonts):
             screen.blit(title, (WIDTH // 2 - title.get_width() // 2, 40))
             screen.blit(sub, (WIDTH // 2 - sub.get_width() // 2, HEIGHT - 60))
 
+        music.draw(screen, font_small)
         frame += 1
         pygame.display.flip()
         clock.tick(FPS)
@@ -1043,6 +1299,7 @@ def run_game():
     pygame.init()
     screen = pygame.display.set_mode((WIDTH, HEIGHT))
     pygame.display.set_caption("Body Tracking Flappy Drone")
+    music.start()
     clock = pygame.time.Clock()
     font_large = pygame.font.SysFont("Arial", 48, bold=True)
     font_small = pygame.font.SysFont("Arial", 24)
@@ -1080,6 +1337,7 @@ def run_game():
 
     while True:
         for event in pygame.event.get():
+            music.handle_event(event)
             if event.type == pygame.QUIT:
                 shutdown()
             if event.type == pygame.KEYDOWN:
@@ -1167,7 +1425,7 @@ def run_game():
 
         score_text = font_large.render(f"Puntos: {score}", True, COLOR_TEXT)
         gesture_text = font_small.render(f"Gesto: {gesture}", True, (255, 255, 0))
-        help_text = font_small.render("B: cambiar fondo", True, COLOR_TEXT)
+        help_text = font_small.render("B: fondo   +/-: volumen   M: silenciar", True, COLOR_TEXT)
         screen.blit(score_text, (20, 20))
         screen.blit(gesture_text, (20, 80))
         screen.blit(help_text, (20, HEIGHT - 35))
@@ -1178,6 +1436,7 @@ def run_game():
             screen.blit(go_text, (WIDTH // 2 - go_text.get_width() // 2, HEIGHT // 2 - 50))
             screen.blit(restart_text, (WIDTH // 2 - restart_text.get_width() // 2, HEIGHT // 2 + 20))
 
+        music.draw(screen, font_small)
         pygame.display.flip()
         clock.tick(FPS)
 
