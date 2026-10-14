@@ -42,14 +42,11 @@ MAX_PIPE_SPEED = 10          # límite máximo de velocidad
 CAMERA_INDEX = 0
 MODEL_PATH = os.path.join(BASE_DIR, "models", "pose_landmarker_lite.task")
 
-
 # =====================================================================
 #  CONFIGURACIÓN DE LA MÚSICA
 # =====================================================================
 # Pon tu archivo junto a main.py (o cambia el nombre aquí). Acepta .mp3, .ogg y .wav.
-MUSIC_PATH = os.path.join(BASE_DIR, "mi_cancion.mp3")      # <- esta línea
-MUSIC_VOLUME = 0.5
-MUSIC_VOLUME_STEP = 0.05
+MUSIC_PATH = os.path.join(BASE_DIR, "music.mp3")
 MUSIC_VOLUME = 0.5                      # volumen inicial (0.0 a 1.0)
 MUSIC_VOLUME_STEP = 0.05                # cuánto cambia con cada pulsación de + / -
 # Teclas en el juego:  +  sube el volumen  |  -  lo baja  |  M  silencia / reactiva
@@ -119,13 +116,20 @@ DRONE_SIZE = (50, 38)      # tamaño (ancho, alto) de la nave; también es su hi
 # Modelo 3D: .obj (sin instalar nada) o .glb/.gltf/.stl/.ply (requiere: pip install trimesh).
 # Si el archivo no existe, se usa el sprite 2D (ship.jfif) como antes.
 # Prueba y orienta tu modelo con:  python main.py --preview
-SHIP_3D_PATH = os.path.join(BASE_DIR, "ship.obj")
+SHIP_3D_PATH = os.path.join(BASE_DIR, "ship.glb")
 SHIP_3D_COLOR = (0, 200, 255)          # color base del modelo (no usa texturas)
-SHIP_3D_BASE_ROT = (0, 0, 0)           # rotación (x, y, z) en grados para orientar el modelo
+SHIP_3D_BASE_ROT = (0, -90, 0)           # rotación (x, y, z) en grados para orientar el modelo
 SHIP_3D_TILT_MAX = 25                  # inclinación máxima (grados) al subir/bajar
 SHIP_3D_TILT_STEP = 3                  # paso de la caché de inclinación (grados)
 SHIP_3D_SUPERSAMPLE = 3                # suavizado de bordes (más = más lento al arrancar)
 SHIP_3D_LIGHT = (0.4, 0.6, 0.7)        # dirección de la luz (x, y, z)
+
+# Mundo 1 (Flappy): la nave se ve de PERFIL con la nariz a la derecha (SHIP_3D_BASE_ROT).
+# Mundo 2 (Space Invaders): la nave se ve de PLANTA (desde arriba) con la nariz hacia arriba.
+# SHIP_3D_TOPVIEW_ROT es la rotación extra que pasa de perfil a planta; (90, 0, 90) funciona
+# cuando el perfil está bien orientado. Ajústala con:  python main.py --preview  (tecla T)
+INVADERS_SHIP_SIZE = (50, 50)          # tamaño (ancho, alto) de la nave en Space Invaders
+SHIP_3D_TOPVIEW_ROT = (90, 0, 90)
 
 # =====================================================================
 #  CONFIGURACIÓN DE LOS FONDOS (uno por mundo)
@@ -374,6 +378,7 @@ def camera_process(gesture_value, invaders_value, stop_event):
 # =====================================================================
 class MusicPlayer:
     """Música de fondo en bucle con control de volumen (+ / -) y silencio (M)."""
+
     def __init__(self):
         self.enabled = False
         self.volume = max(0.0, min(1.0, MUSIC_VOLUME))
@@ -382,7 +387,6 @@ class MusicPlayer:
 
     def start(self):
         """Inicia la música. Llamar después de pygame.init()."""
-        
         if not MUSIC_PATH or not os.path.isfile(MUSIC_PATH):
             print(f"AVISO: no se encontró la música '{MUSIC_PATH}'. El juego seguirá sin música.")
             return
@@ -569,8 +573,10 @@ def _sample_texture(tex, uv):
     weights = np.array([[1 / 3, 1 / 3, 1 / 3], [0.6, 0.2, 0.2], [0.2, 0.6, 0.2], [0.2, 0.2, 0.6]])
     pts = np.einsum("pv,kvc->kpc", weights, uv)               # (k, 4, 2)
     h, w = tex.shape[:2]
-    x = ((pts[..., 0] % 1.0) * (w - 1)).astype(int)
-    y = ((1 - (pts[..., 1] % 1.0)) * (h - 1)).astype(int)
+    # Las UV fuera de 0-1 se repiten (mosaico), pero 1.0 exacto es el borde y no debe dar la vuelta a 0
+    pts = np.where((pts >= 0) & (pts <= 1), pts, pts % 1.0)
+    x = (pts[..., 0] * (w - 1)).astype(int)
+    y = ((1 - pts[..., 1]) * (h - 1)).astype(int)
     return tex[y, x].mean(axis=1)
 
 
@@ -648,6 +654,40 @@ def _load_obj(path):
     return verts, faces, (None if np.isnan(colors).all() else colors)
 
 
+def _trimesh_face_colors(g):
+    """Color por cara (F, 3) de una pieza de trimesh: textura, color base del material o colores
+    propios. None si la pieza no trae color."""
+    vis = g.visual
+    faces = np.asarray(g.faces, dtype=int)
+
+    if getattr(vis, "kind", None) == "texture":
+        mat = getattr(vis, "material", None)
+        uv = getattr(vis, "uv", None)
+
+        # Textura de color base: color promedio de cada cara según sus UV
+        tex = getattr(mat, "baseColorTexture", None)
+        if tex is None:
+            tex = getattr(mat, "image", None)
+        if tex is not None and uv is not None and len(uv) == len(g.vertices):
+            arr = np.asarray(tex.convert("RGB"), dtype=float)       # (alto, ancho, 3)
+            return _sample_texture(arr, np.asarray(uv, dtype=float)[faces])
+
+        # Material sin textura: color base (glTF) o difuso
+        factor = getattr(mat, "baseColorFactor", None)
+        if factor is None:
+            factor = getattr(mat, "diffuse", None)
+        if factor is not None:
+            rgb = np.asarray(factor, dtype=float).ravel()[:3]
+            if rgb.max() > 1:
+                rgb = rgb / 255.0
+            return np.tile(_kd_to_rgb(rgb), (len(faces), 1))
+        return None
+
+    if getattr(vis, "defined", False):                              # colores por cara / vértice
+        return np.asarray(vis.face_colors)[:, :3].astype(float)
+    return None
+
+
 def _load_with_trimesh(path):
     """Formatos .glb/.gltf/.stl/.ply (requiere trimesh). Conserva colores y texturas base."""
     try:
@@ -668,11 +708,9 @@ def _load_with_trimesh(path):
         f = np.asarray(g.faces, dtype=int)
         c = np.full((len(f), 3), np.nan)
         try:
-            vis = g.visual
-            if getattr(vis, "kind", None) == "texture":
-                vis = vis.to_color()                                # textura -> colores
-            if getattr(vis, "defined", False):
-                c = np.asarray(vis.face_colors)[:, :3].astype(float)
+            fc = _trimesh_face_colors(g)
+            if fc is not None:
+                c = fc
         except Exception as e:
             print(f"ADVERTENCIA: no se pudieron leer los colores de una pieza: {e}")
         all_v.append(v)
@@ -696,10 +734,13 @@ class Ship3D:
     Genera superficies de pygame y las guarda en caché por ángulo de inclinación.
     Usa los colores de los materiales del modelo si los tiene (SHIP_3D_USE_MATERIALS)."""
 
-    def __init__(self, path, size, color, base_rot):
+    def __init__(self, path, size, color, base_rot, extra_rot=(0, 0, 0), tilt_range=None, mesh=None):
         self.size = size
         self.color = np.array(color, dtype=float)
-        verts, self.faces, face_colors = load_mesh(path)
+        self.extra_rot = tuple(extra_rot)
+        self.tilt_range = SHIP_3D_TILT_MAX if tilt_range is None else tilt_range
+        self.mesh = mesh if mesh is not None else load_mesh(path)   # se puede reutilizar
+        verts, self.faces, face_colors = self.mesh
         if len(verts) == 0 or len(self.faces) == 0:
             raise RuntimeError("el modelo no tiene geometría")
         self.verts = verts - (verts.max(axis=0) + verts.min(axis=0)) / 2
@@ -714,19 +755,23 @@ class Ship3D:
             fc[np.isnan(fc).any(axis=1)] = self.color
             self.face_colors = fc
         origen = "materiales del modelo" if self.face_colors is not None else "color único (SHIP_3D_COLOR)"
-        print(f"[Nave 3D] {len(self.faces)} caras | colores: {origen}")
+        if mesh is None:
+            print(f"[Nave 3D] {len(self.faces)} caras | colores: {origen}")
 
         self.cache = {}
         self.set_base_rot(*base_rot)
 
-    def set_base_rot(self, rx, ry, rz):
+    def set_base_rot(self, rx, ry, rz, extra_rot=None):
+        """Orientación del modelo: rotación base (perfil) y, opcionalmente, una rotación extra."""
+        if extra_rot is not None:
+            self.extra_rot = tuple(extra_rot)
         self.base_rot = (rx, ry, rz)
-        self.base = _rot_matrix(rx, ry, rz)
+        self.base = _rot_matrix(*self.extra_rot) @ _rot_matrix(rx, ry, rz)
         self.cache.clear()
 
         # Escala fija para que el modelo quepa también inclinado al máximo
         half_x = half_y = 1e-9
-        for tilt in (-SHIP_3D_TILT_MAX, 0, SHIP_3D_TILT_MAX):
+        for tilt in (-self.tilt_range, 0, self.tilt_range):
             v = self.verts @ (_rot_matrix(0, 0, tilt) @ self.base).T
             half_x = max(half_x, (v[:, 0].max() - v[:, 0].min()) / 2)
             half_y = max(half_y, (v[:, 1].max() - v[:, 1].min()) / 2)
@@ -790,6 +835,33 @@ def get_ship_model():
     except Exception as e:
         print(f"ADVERTENCIA: no se pudo cargar el modelo 3D '{SHIP_3D_PATH}': {e}")
     return _SHIP_MODEL
+
+
+_SHIP_TOP = None
+_SHIP_TOP_TRIED = False
+
+
+def get_ship_topview():
+    """Modelo 3D de la nave visto de planta (nariz hacia arriba), o None si no hay modelo."""
+    global _SHIP_TOP, _SHIP_TOP_TRIED
+    if _SHIP_TOP_TRIED:
+        return _SHIP_TOP
+    _SHIP_TOP_TRIED = True
+    side = get_ship_model()
+    if side is None:
+        return None
+    try:
+        _SHIP_TOP = Ship3D(SHIP_3D_PATH, INVADERS_SHIP_SIZE, SHIP_3D_COLOR, SHIP_3D_BASE_ROT,
+                           extra_rot=SHIP_3D_TOPVIEW_ROT, tilt_range=0, mesh=side.mesh)
+    except Exception as e:
+        print(f"ADVERTENCIA: no se pudo crear la vista de planta de la nave: {e}")
+    return _SHIP_TOP
+
+
+def get_invaders_ship_image(drone):
+    """Imagen de la nave para Space Invaders: de planta si hay modelo 3D; si no, el sprite 2D."""
+    top = get_ship_topview()
+    return top.surface(0) if top else drone.image
 
 
 class Drone:
@@ -1387,7 +1459,7 @@ def run_game():
             if enter_portal:
                 portal_transition(screen, clock, drone.rect.center)
                 result = run_invaders(screen, clock, invaders_background, invaders_value,
-                                      shutdown, drone.image, (font_large, font_small))
+                                      shutdown, get_invaders_ship_image(drone), (font_large, font_small))
                 if result == "win":
                     # Ganó Space Invaders: pantalla final y el juego se reinicia con R
                     run_ending(screen, clock, shutdown, drone.image, (font_large, font_small))
@@ -1442,8 +1514,8 @@ def run_game():
 
 
 def run_ship_preview():
-    """Vista previa del modelo 3D para encontrar la orientación correcta.
-    Flechas: rotar X/Y | A y D: rotar Z | Q o Esc: salir."""
+    """Vista previa del modelo 3D para orientarlo.
+    T: alternar PERFIL (mundo 1) / PLANTA (mundo 2) | Flechas: rotar X/Y | A y D: rotar Z | Q: salir."""
     pygame.init()
     screen = pygame.display.set_mode((WIDTH, HEIGHT))
     pygame.display.set_caption("Vista previa de la nave 3D")
@@ -1453,44 +1525,58 @@ def run_ship_preview():
     if not os.path.isfile(SHIP_3D_PATH):
         print(f"No se encontró el modelo: {SHIP_3D_PATH}")
         return
-    model = Ship3D(SHIP_3D_PATH, (480, 360), SHIP_3D_COLOR, SHIP_3D_BASE_ROT)
-    rx, ry, rz = SHIP_3D_BASE_ROT
+    model = Ship3D(SHIP_3D_PATH, (480, 360), SHIP_3D_COLOR, SHIP_3D_BASE_ROT, tilt_range=0)
+    side_rot = list(SHIP_3D_BASE_ROT)
+    top_rot = list(SHIP_3D_TOPVIEW_ROT)
+    top = False
+
+    def refresh():
+        model.set_base_rot(*side_rot, extra_rot=top_rot if top else (0, 0, 0))
 
     running = True
     while running:
+        rot = top_rot if top else side_rot            # lo que se está editando ahora
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 running = False
             if event.type == pygame.KEYDOWN:
                 if event.key in (pygame.K_q, pygame.K_ESCAPE):
                     running = False
+                elif event.key == pygame.K_t:
+                    top = not top
                 elif event.key == pygame.K_UP:
-                    rx += 15
+                    rot[0] += 15
                 elif event.key == pygame.K_DOWN:
-                    rx -= 15
+                    rot[0] -= 15
                 elif event.key == pygame.K_RIGHT:
-                    ry += 15
+                    rot[1] += 15
                 elif event.key == pygame.K_LEFT:
-                    ry -= 15
+                    rot[1] -= 15
                 elif event.key == pygame.K_a:
-                    rz += 15
+                    rot[2] += 15
                 elif event.key == pygame.K_d:
-                    rz -= 15
-                model.set_base_rot(rx, ry, rz)
+                    rot[2] -= 15
+                refresh()
 
         screen.fill((20, 24, 40))
         img = model.surface(0)
         screen.blit(img, img.get_rect(center=(WIDTH // 2, HEIGHT // 2 - 30)))
-        lines = [f"SHIP_3D_BASE_ROT = ({rx}, {ry}, {rz})",
-                 "La nariz debe apuntar a la DERECHA de la pantalla",
-                 "Flechas: rotar X/Y   A/D: rotar Z   Q: salir"]
+        if top:
+            lines = [f"PLANTA (mundo 2)   SHIP_3D_TOPVIEW_ROT = {tuple(top_rot)}",
+                     "Vista desde arriba: la nariz debe apuntar hacia ARRIBA",
+                     "T: perfil/planta   Flechas: X/Y   A/D: Z   Q: salir"]
+        else:
+            lines = [f"PERFIL (mundo 1)   SHIP_3D_BASE_ROT = {tuple(side_rot)}",
+                     "Vista de lado: la nariz debe apuntar a la DERECHA",
+                     "T: perfil/planta   Flechas: X/Y   A/D: Z   Q: salir"]
         for i, t in enumerate(lines):
             color = (255, 255, 0) if i == 0 else (255, 255, 255)
             screen.blit(font.render(t, True, color), (20, HEIGHT - 100 + i * 28))
         pygame.display.flip()
         clock.tick(30)
 
-    print(f"SHIP_3D_BASE_ROT = ({rx}, {ry}, {rz})")
+    print(f"SHIP_3D_BASE_ROT = {tuple(side_rot)}")
+    print(f"SHIP_3D_TOPVIEW_ROT = {tuple(top_rot)}")
     pygame.quit()
 
 
