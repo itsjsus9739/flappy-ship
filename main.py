@@ -54,7 +54,7 @@ MUSIC_VOLUME_STEP = 0.05                # cuánto cambia con cada pulsación de 
 # =====================================================================
 #  CONFIGURACIÓN DEL PORTAL
 # =====================================================================
-PORTAL_FIRST_LEVEL = 0                 # primer nivel en el que aparece un portal (normal: 10)
+PORTAL_FIRST_LEVEL = 5               # primer nivel en el que aparece un portal (normal: 10)
 PORTAL_EVERY = 5                       # luego aparece cada N niveles (10, 15, 20, 25...)
 PORTAL_WIDTH, PORTAL_HEIGHT = 100, 180
 
