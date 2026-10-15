@@ -42,18 +42,6 @@ MAX_PIPE_SPEED = 10          # límite máximo de velocidad
 CAMERA_INDEX = 0
 MODEL_PATH = os.path.join(BASE_DIR, "models", "pose_landmarker_lite.task")
 
-
-# =====================================================================
-#  CONFIGURACIÓN DE LA MÚSICA
-# =====================================================================
-# Pon tu archivo junto a main.py (o cambia el nombre aquí). Acepta .mp3, .ogg y .wav.
-MUSIC_PATH = os.path.join(BASE_DIR, "mi_cancion.mp3")      # <- esta línea
-MUSIC_VOLUME = 0.5
-MUSIC_VOLUME_STEP = 0.05
-MUSIC_VOLUME = 0.5                      # volumen inicial (0.0 a 1.0)
-MUSIC_VOLUME_STEP = 0.05                # cuánto cambia con cada pulsación de + / -
-# Teclas en el juego:  +  sube el volumen  |  -  lo baja  |  M  silencia / reactiva
-
 # =====================================================================
 #  CONFIGURACIÓN DEL PORTAL
 # =====================================================================
@@ -71,31 +59,36 @@ ENDING_PLANET_RADIUS = 200             # tamaño final del planeta
 #  CONFIGURACIÓN DE SPACE INVADERS
 # =====================================================================
 # --- Enemigos ---
-# SPRITE_PATH puede ser: un archivo (png/jpg), una CARPETA con frames
-# (invader_0.png, invader_1.png, ...) o un spritesheet horizontal
-# (en ese caso indica cuántos frames tiene en INVADER_SHEET_FRAMES).
-# Si no existe, se dibuja un enemigo verde simple.
-INVADER_SPRITE_PATH = os.path.join(BASE_DIR, "invader.png")
-INVADER_SHEET_FRAMES = 1
-INVADER_ANIM_FPS = 6                   # velocidad de la animación del enemigo
-INVADER_SIZE = (40, 30)                # tamaño (ancho, alto) de cada enemigo
+# Se cargan 4 estados desde la carpeta `invaders/` (se generan con extract_invaders_assets.py):
+#   enemy_idle.png (vuelo), enemy_attack.png (al disparar),
+#   enemy_damage.png (impacto) y enemy_destroy.png (explosión).
+# Si falta alguno, se dibuja un enemigo verde simple.
+INVADER_SPRITES_PATH = os.path.join(BASE_DIR, "invaders")
+INVADER_SIZE = (52, 30)                # hitbox (ancho, alto); la nave se escala a este ancho
 INVADERS_ROWS, INVADERS_COLS = 4, 8
 INVADERS_SPACING = (20, 15)            # separación horizontal y vertical entre enemigos
 # OJO: INVADERS_COLS * (ancho + separación) debe ser menor a ~760 px
+INVADER_BOB_AMPLITUDE = 2              # cuánto flotan arriba/abajo (px). 0 = quietos
+INVADER_BOB_PERIOD_MS = 1000           # duración de un ciclo de flotado
+INVADER_ATTACK_MS = 250                # cuánto se ve el sprite de ataque al disparar
+INVADER_DAMAGE_MS = 90                 # destello de daño justo antes de explotar
+INVADER_DESTROY_MS = 450               # duración de la explosión
+INVADER_DESTROY_SCALE = (0.9, 1.8)     # tamaño de la explosión: inicio -> final (x tamaño de la nave)
 
-# --- Proyectiles (mismas opciones de sprite que los enemigos) ---
-BULLET_ANIM_FPS = 10                   # velocidad de animación de los proyectiles
+# --- Proyectiles ---
+# Se cargan desde la carpeta `bullets/`: player_fly_0..2.png / player_hit_0..2.png
+# y enemy_fly_0..2.png / enemy_hit_0..2.png (vuelo apunta hacia ARRIBA; el del enemigo se voltea solo).
+BULLETS_SPRITES_PATH = os.path.join(BASE_DIR, "bullets")
+BULLET_ANIM_FPS = 12                   # velocidad de la animación en vuelo
+BULLET_HIT_FPS = 14                    # velocidad de la animación de impacto
+BULLET_SPRITE_LENGTH = 44              # largo visual del disparo (px), incluida la cola
+BULLET_HIT_SIZE = 40                   # tamaño visual del impacto (px)
 
-PLAYER_BULLET_SPRITE_PATH = os.path.join(BASE_DIR, "bullet_player.png")
-PLAYER_BULLET_SHEET_FRAMES = 1
-PLAYER_BULLET_SIZE = (6, 18)           # tamaño (ancho, alto) del proyectil del jugador
+PLAYER_BULLET_SIZE = (8, 16)           # hitbox del proyectil del jugador (la cabeza del disparo)
 PLAYER_BULLET_COLOR = (0, 255, 255)    # color si no hay sprite
 
-ENEMY_BULLET_SPRITE_PATH = os.path.join(BASE_DIR, "bullet_enemy.png")
-ENEMY_BULLET_SHEET_FRAMES = 1
-ENEMY_BULLET_SIZE = (6, 18)            # tamaño (ancho, alto) del proyectil enemigo
+ENEMY_BULLET_SIZE = (8, 16)            # hitbox del proyectil enemigo
 ENEMY_BULLET_COLOR = (255, 80, 80)     # color si no hay sprite
-ENEMY_BULLET_FLIP_Y = False            # True si tu sprite apunta hacia arriba y debe caer boca abajo
 
 INVADERS_ENEMY_SPEED = 2               # velocidad horizontal inicial de los enemigos
 INVADERS_DROP = 20                     # cuánto bajan al tocar el borde
@@ -160,7 +153,7 @@ PIPE_SPRITES_PATH = os.path.join(BASE_DIR, "pipes")
 TENTACLE_PREFIX = "tentacle_"
 
 # Animación de vaivén: la base queda fija y una onda recorre el tentáculo hasta la punta.
-PIPE_ANIM_FPS = 25              # velocidad de la animación (frames por segundo)
+PIPE_ANIM_FPS = 16               # velocidad de la animación (frames por segundo)
 TENTACLE_ANIM_FRAMES = 10       # frames por ciclo (más = más suave, pero usa más memoria)
 TENTACLE_SWAY_AMPLITUDE = 20    # cuánto se mueve la punta de lado a lado (px). 0 = sin movimiento
 TENTACLE_SWAY_WAVES = 2       # cuántas "ondas" caben a lo largo del tentáculo
@@ -370,74 +363,6 @@ def camera_process(gesture_value, invaders_value, stop_event):
 
 
 # =====================================================================
-#  MÚSICA
-# =====================================================================
-class MusicPlayer:
-    """Música de fondo en bucle con control de volumen (+ / -) y silencio (M)."""
-    def __init__(self):
-        self.enabled = False
-        self.volume = max(0.0, min(1.0, MUSIC_VOLUME))
-        self.muted = False
-        self.hud_until = 0
-
-    def start(self):
-        """Inicia la música. Llamar después de pygame.init()."""
-        
-        if not MUSIC_PATH or not os.path.isfile(MUSIC_PATH):
-            print(f"AVISO: no se encontró la música '{MUSIC_PATH}'. El juego seguirá sin música.")
-            return
-        try:
-            pygame.mixer.init()
-            pygame.mixer.music.load(MUSIC_PATH)
-            pygame.mixer.music.set_volume(self.volume)
-            pygame.mixer.music.play(-1)                      # -1 = en bucle
-            self.enabled = True
-        except pygame.error as e:
-            print(f"ADVERTENCIA: no se pudo reproducir la música: {e}")
-
-    def _apply(self):
-        pygame.mixer.music.set_volume(0.0 if self.muted else self.volume)
-        self.hud_until = pygame.time.get_ticks() + 1500      # muestra el indicador 1.5 s
-
-    def change_volume(self, delta):
-        self.volume = max(0.0, min(1.0, round(self.volume + delta, 2)))
-        if delta > 0:
-            self.muted = False                               # subir el volumen quita el silencio
-        self._apply()
-
-    def toggle_mute(self):
-        self.muted = not self.muted
-        self._apply()
-
-    def handle_event(self, event):
-        if not self.enabled or event.type != pygame.KEYDOWN:
-            return
-        if event.key in (pygame.K_PLUS, pygame.K_KP_PLUS, pygame.K_EQUALS):
-            self.change_volume(MUSIC_VOLUME_STEP)
-        elif event.key in (pygame.K_MINUS, pygame.K_KP_MINUS):
-            self.change_volume(-MUSIC_VOLUME_STEP)
-        elif event.key == pygame.K_m:
-            self.toggle_mute()
-
-    def draw(self, surface, font):
-        """Indicador de volumen arriba a la derecha (aparece unos segundos al cambiarlo)."""
-        if not self.enabled or pygame.time.get_ticks() > self.hud_until:
-            return
-        label = "Música: silenciada" if self.muted else f"Volumen: {round(self.volume * 100)}%"
-        text = font.render(label, True, COLOR_TEXT)
-        x = WIDTH - text.get_width() - 20
-        surface.blit(text, (x, 15))
-        bar = pygame.Rect(x, 15 + text.get_height() + 4, text.get_width(), 8)
-        pygame.draw.rect(surface, (60, 60, 80), bar)
-        fill = 0 if self.muted else int(bar.width * self.volume)
-        pygame.draw.rect(surface, (255, 200, 0), (bar.x, bar.y, fill, bar.height))
-        pygame.draw.rect(surface, COLOR_TEXT, bar, 1)
-
-
-music = MusicPlayer()
-
-
-# =====================================================================
 #  CLASES DEL JUEGO
 # =====================================================================
 class Background:
@@ -493,13 +418,6 @@ def get_difficulty(score):
     return level, spacing, gap, speed
 
 
-# ---- Opciones de materiales del modelo 3D ----
-SHIP_3D_USE_MATERIALS = True      # True: usa los colores/texturas que traiga el modelo
-SHIP_3D_LINEAR_TO_SRGB = True     # Blender guarda los colores en lineal; True los corrige para
-                                  # que se vean como en Blender (pon False si salen muy claros)
-SHIP_3D_AMBIENT = 0.40            # luz ambiente (0-1): sube si el modelo se ve oscuro
-
-
 def _rot_matrix(rx, ry, rz):
     """Matriz de rotación a partir de ángulos en grados (x, y, z)."""
     ax, ay, az = np.radians([rx, ry, rz])
@@ -512,210 +430,46 @@ def _rot_matrix(rx, ry, rz):
     return rot_z @ rot_y @ rot_x
 
 
-def _kd_to_rgb(kd):
-    """Color difuso del .mtl (0-1) -> RGB 0-255."""
-    c = np.clip(np.array(kd, dtype=float), 0, 1)
-    if SHIP_3D_LINEAR_TO_SRGB:
-        c = np.where(c <= 0.0031308, c * 12.92, 1.055 * np.power(c, 1 / 2.4) - 0.055)
-    return c * 255
+def load_mesh(path):
+    """Carga un modelo 3D. Devuelve (vértices Nx3, triángulos Mx3)."""
+    if path.lower().endswith(".obj"):
+        verts, faces = [], []
+        with open(path, encoding="utf-8", errors="ignore") as f:
+            for line in f:
+                if line.startswith("v "):
+                    p = line.split()
+                    verts.append([float(p[1]), float(p[2]), float(p[3])])
+                elif line.startswith("f "):
+                    idx = []
+                    for tok in line.split()[1:]:
+                        i = int(tok.split("/")[0])
+                        idx.append(i - 1 if i > 0 else len(verts) + i)
+                    for k in range(1, len(idx) - 1):      # triangula polígonos
+                        faces.append((idx[0], idx[k], idx[k + 1]))
+        return np.array(verts, dtype=float), np.array(faces, dtype=int)
 
-
-def _load_texture(value, base_dir):
-    """Carga la textura de un 'map_Kd' como arreglo (alto, ancho, 3). None si falla."""
-    value = value.strip()
-    names = [value, value.split()[-1]] if value else []
-    for name in names:
-        name = name.replace("\\", "/")
-        for candidate in (os.path.join(base_dir, name), os.path.join(base_dir, os.path.basename(name))):
-            if os.path.isfile(candidate):
-                try:
-                    surf = pygame.image.load(candidate)
-                    return np.transpose(pygame.surfarray.array3d(surf), (1, 0, 2)).astype(float)
-                except pygame.error as e:
-                    print(f"ADVERTENCIA: no se pudo leer la textura '{candidate}': {e}")
-                    return None
-    print(f"ADVERTENCIA: no se encontró la textura '{value}' (ponla junto al .obj)")
-    return None
-
-
-def _parse_mtl(mtl_path):
-    """Lee un .mtl. Devuelve {nombre: {'kd': (r,g,b) 0-1 o None, 'texture': arreglo o None}}."""
-    materials, current = {}, None
-    base_dir = os.path.dirname(mtl_path)
-    with open(mtl_path, encoding="utf-8", errors="ignore") as f:
-        for raw in f:
-            line = raw.strip()
-            if not line or line.startswith("#"):
-                continue
-            parts = line.split(None, 1)
-            key, val = parts[0].lower(), (parts[1] if len(parts) > 1 else "")
-            if key == "newmtl":
-                current = {"kd": None, "texture": None}
-                materials[val.strip()] = current
-            elif current is None:
-                continue
-            elif key == "kd":
-                nums = [float(x) for x in val.split()[:3]]
-                if len(nums) == 3:
-                    current["kd"] = tuple(nums)
-            elif key == "map_kd":
-                current["texture"] = _load_texture(val, base_dir)
-    return materials
-
-
-def _sample_texture(tex, uv):
-    """Color promedio de cada cara: 4 muestras de la textura dentro del triángulo.
-    uv: (k, 3, 2) -> devuelve (k, 3) en RGB 0-255."""
-    weights = np.array([[1 / 3, 1 / 3, 1 / 3], [0.6, 0.2, 0.2], [0.2, 0.6, 0.2], [0.2, 0.2, 0.6]])
-    pts = np.einsum("pv,kvc->kpc", weights, uv)               # (k, 4, 2)
-    h, w = tex.shape[:2]
-    x = ((pts[..., 0] % 1.0) * (w - 1)).astype(int)
-    y = ((1 - (pts[..., 1] % 1.0)) * (h - 1)).astype(int)
-    return tex[y, x].mean(axis=1)
-
-
-def _load_obj(path):
-    base_dir = os.path.dirname(path)
-    verts, vcols, uvs = [], [], []
-    tris, tri_uv, tri_mat = [], [], []
-    materials, current_mat = {}, ""
-
-    with open(path, encoding="utf-8", errors="ignore") as f:
-        for line in f:
-            if line.startswith("v "):
-                p = line.split()
-                verts.append([float(p[1]), float(p[2]), float(p[3])])
-                if len(p) >= 7:                                # color por vértice (opcional)
-                    vcols.append([float(p[4]), float(p[5]), float(p[6])])
-            elif line.startswith("vt "):
-                p = line.split()
-                uvs.append([float(p[1]), float(p[2])])
-            elif line.startswith("mtllib"):
-                mtl_path = os.path.join(base_dir, line[6:].strip().replace("\\", "/"))
-                if os.path.isfile(mtl_path):
-                    materials.update(_parse_mtl(mtl_path))
-                else:
-                    print(f"ADVERTENCIA: no se encontró '{os.path.basename(mtl_path)}' "
-                          "(ponlo junto al .obj para conservar los materiales)")
-            elif line.startswith("usemtl"):
-                current_mat = line[6:].strip()
-            elif line.startswith("f "):
-                idx, uv_idx = [], []
-                for tok in line.split()[1:]:
-                    parts = tok.split("/")
-                    i = int(parts[0])
-                    idx.append(i - 1 if i > 0 else len(verts) + i)
-                    if len(parts) > 1 and parts[1]:
-                        t = int(parts[1])
-                        uv_idx.append(t - 1 if t > 0 else len(uvs) + t)
-                    else:
-                        uv_idx.append(-1)
-                for k in range(1, len(idx) - 1):               # triangula polígonos
-                    tris.append((idx[0], idx[k], idx[k + 1]))
-                    tri_uv.append((uv_idx[0], uv_idx[k], uv_idx[k + 1]))
-                    tri_mat.append(current_mat)
-
-    verts = np.array(verts, dtype=float)
-    faces = np.array(tris, dtype=int)
-    if len(faces) == 0:
-        return verts, faces, None
-
-    colors = np.full((len(faces), 3), np.nan)                  # NaN = usar SHIP_3D_COLOR
-    tri_mat = np.array(tri_mat, dtype=object)
-    tri_uv = np.array(tri_uv, dtype=int)
-
-    # 1) Color difuso (Kd) de cada material
-    for name, mat in materials.items():
-        sel = np.where(tri_mat == name)[0]
-        if len(sel) and mat["kd"] is not None:
-            colors[sel] = _kd_to_rgb(mat["kd"])
-
-    # 2) Colores por vértice, si el archivo los trae
-    if len(vcols) == len(verts) and len(vcols):
-        colors[:] = np.array(vcols)[faces].mean(axis=1) * 255
-
-    # 3) Texturas (map_Kd): color promedio por cara según sus coordenadas UV
-    if uvs:
-        uv_arr = np.array(uvs, dtype=float)
-        for name, mat in materials.items():
-            if mat["texture"] is None:
-                continue
-            sel = np.where(tri_mat == name)[0]
-            sel = sel[(tri_uv[sel] >= 0).all(axis=1) & (tri_uv[sel] < len(uv_arr)).all(axis=1)]
-            if len(sel):
-                colors[sel] = _sample_texture(mat["texture"], uv_arr[tri_uv[sel]])
-
-    return verts, faces, (None if np.isnan(colors).all() else colors)
-
-
-def _load_with_trimesh(path):
-    """Formatos .glb/.gltf/.stl/.ply (requiere trimesh). Conserva colores y texturas base."""
     try:
         import trimesh
     except ImportError:
         raise RuntimeError("para este formato instala trimesh:  pip install trimesh")
-
-    loaded = trimesh.load(path)
-    if isinstance(loaded, trimesh.Scene):
-        geoms = [g for g in loaded.dump() if hasattr(g, "faces")]   # con sus transformaciones
-    else:
-        geoms = [loaded]
-
-    all_v, all_f, all_c = [], [], []
-    offset = 0
-    for g in geoms:
-        v = np.asarray(g.vertices, dtype=float)
-        f = np.asarray(g.faces, dtype=int)
-        c = np.full((len(f), 3), np.nan)
-        try:
-            vis = g.visual
-            if getattr(vis, "kind", None) == "texture":
-                vis = vis.to_color()                                # textura -> colores
-            if getattr(vis, "defined", False):
-                c = np.asarray(vis.face_colors)[:, :3].astype(float)
-        except Exception as e:
-            print(f"ADVERTENCIA: no se pudieron leer los colores de una pieza: {e}")
-        all_v.append(v)
-        all_f.append(f + offset)
-        all_c.append(c)
-        offset += len(v)
-
-    colors = np.vstack(all_c)
-    return np.vstack(all_v), np.vstack(all_f), (None if np.isnan(colors).all() else colors)
-
-
-def load_mesh(path):
-    """Carga un modelo 3D. Devuelve (vértices Nx3, triángulos Mx3, colores por cara Mx3 o None)."""
-    if path.lower().endswith(".obj"):
-        return _load_obj(path)
-    return _load_with_trimesh(path)
+    mesh = trimesh.load(path, force="mesh")
+    return np.array(mesh.vertices, dtype=float), np.array(mesh.faces, dtype=int)
 
 
 class Ship3D:
     """Renderizador 3D por software (proyección ortográfica, sombreado plano).
-    Genera superficies de pygame y las guarda en caché por ángulo de inclinación.
-    Usa los colores de los materiales del modelo si los tiene (SHIP_3D_USE_MATERIALS)."""
+    Genera superficies de pygame y las guarda en caché por ángulo de inclinación."""
 
     def __init__(self, path, size, color, base_rot):
         self.size = size
         self.color = np.array(color, dtype=float)
-        verts, self.faces, face_colors = load_mesh(path)
+        verts, self.faces = load_mesh(path)
         if len(verts) == 0 or len(self.faces) == 0:
             raise RuntimeError("el modelo no tiene geometría")
         self.verts = verts - (verts.max(axis=0) + verts.min(axis=0)) / 2
         if len(self.faces) > 5000:
             print(f"AVISO: el modelo tiene {len(self.faces)} caras; con más de ~5000 "
                   "el arranque puede tardar. Simplifícalo en Blender (Decimate).")
-
-        # Colores por cara: los del material, o SHIP_3D_COLOR donde no haya
-        self.face_colors = None
-        if SHIP_3D_USE_MATERIALS and face_colors is not None:
-            fc = face_colors.copy()
-            fc[np.isnan(fc).any(axis=1)] = self.color
-            self.face_colors = fc
-        origen = "materiales del modelo" if self.face_colors is not None else "color único (SHIP_3D_COLOR)"
-        print(f"[Nave 3D] {len(self.faces)} caras | colores: {origen}")
-
         self.cache = {}
         self.set_base_rot(*base_rot)
 
@@ -754,9 +508,8 @@ class Ship3D:
 
         light = np.array(SHIP_3D_LIGHT, dtype=float)
         light /= np.linalg.norm(light)
-        intensity = SHIP_3D_AMBIENT + (1 - SHIP_3D_AMBIENT) * np.clip(n @ light, 0, 1)
-        base = self.face_colors if self.face_colors is not None else self.color
-        colors = np.clip(base * intensity[:, None], 0, 255).astype(int).tolist()
+        intensity = 0.35 + 0.65 * np.clip(n @ light, 0, 1)
+        colors = np.clip(self.color * intensity[:, None], 0, 255).astype(int).tolist()
 
         # Algoritmo del pintor: de lo más lejano a lo más cercano
         order = np.argsort(tri[:, :, 2].mean(axis=1))
@@ -995,6 +748,88 @@ def pick_frame(frames, now, fps):
     return frames[int(now / 1000 * fps) % len(frames)]
 
 
+def load_invader_sprites():
+    """Carga los 4 estados del enemigo y los escala a INVADER_SIZE.
+    Devuelve None si falta algún archivo (entonces se dibuja un enemigo simple)."""
+    imgs = {}
+    try:
+        for state in ("idle", "attack", "damage", "destroy"):
+            f = os.path.join(INVADER_SPRITES_PATH, f"enemy_{state}.png")
+            if not os.path.isfile(f):
+                return None
+            imgs[state] = pygame.image.load(f).convert_alpha()
+    except pygame.error as e:
+        print(f"ADVERTENCIA: no se pudieron cargar los sprites del enemigo: {e}")
+        return None
+    body = imgs["idle"].get_bounding_rect()
+    k = INVADER_SIZE[0] / body.w
+    for state, img in imgs.items():
+        size = (max(1, round(img.get_width() * k)), max(1, round(img.get_height() * k)))
+        imgs[state] = pygame.transform.smoothscale(img, size)
+    body = imgs["idle"].get_bounding_rect()          # la nave en reposo es la referencia de alineación
+    return {"frames": imgs, "offset": body.topleft, "body_center": body.center}
+
+
+def load_bullet_sprites():
+    """Disparos del jugador y del enemigo: {'player'|'enemy': {'fly': [...], 'hit': [...]}} o None."""
+    sets = {}
+    try:
+        for owner in ("player", "enemy"):
+            entry = {}
+            for kind, length in (("fly", BULLET_SPRITE_LENGTH), ("hit", BULLET_HIT_SIZE)):
+                frames = []
+                for i in range(12):
+                    f = os.path.join(BULLETS_SPRITES_PATH, f"{owner}_{kind}_{i}.png")
+                    if not os.path.isfile(f):
+                        break
+                    img = pygame.image.load(f).convert_alpha()
+                    k = length / max(img.get_size())
+                    img = pygame.transform.smoothscale(
+                        img, (max(1, round(img.get_width() * k)), max(1, round(img.get_height() * k))))
+                    if owner == "enemy" and kind == "fly":
+                        img = pygame.transform.flip(img, False, True)   # cae hacia abajo
+                    frames.append(img)
+                entry[kind] = frames
+            sets[owner] = entry if entry["fly"] and entry["hit"] else None
+    except pygame.error as e:
+        print(f"ADVERTENCIA: no se pudieron cargar los sprites de disparos: {e}")
+        return None
+    return sets
+
+
+def draw_effects(screen, effects, now, inv_sprites, bullet_sprites):
+    """Dibuja impactos de disparo y explosiones de enemigos. Devuelve los efectos que siguen activos."""
+    alive = []
+    for fx in effects:
+        t = now - fx["start"]
+        if fx["type"] == "hit":
+            frames = bullet_sprites[fx["owner"]]["hit"]
+            i = int(t / 1000 * BULLET_HIT_FPS)
+            if i >= len(frames):
+                continue
+            img = frames[i]
+            screen.blit(img, img.get_rect(center=fx["pos"]))
+        else:  # "die": destello de daño y luego explosión que crece y se desvanece
+            r = fx["rect"]
+            frames = inv_sprites["frames"]
+            if t < INVADER_DAMAGE_MS:
+                ox, oy = inv_sprites["offset"]
+                screen.blit(frames["damage"], (r.x - ox, r.y - oy))
+            elif t < INVADER_DAMAGE_MS + INVADER_DESTROY_MS:
+                p = (t - INVADER_DAMAGE_MS) / INVADER_DESTROY_MS
+                k = INVADER_DESTROY_SCALE[0] + (INVADER_DESTROY_SCALE[1] - INVADER_DESTROY_SCALE[0]) * p
+                src = frames["destroy"]
+                img = pygame.transform.smoothscale(
+                    src, (max(1, int(src.get_width() * k)), max(1, int(src.get_height() * k))))
+                img.set_alpha(int(255 * (1 - p) ** 0.7))
+                cx, cy = inv_sprites["body_center"]
+                screen.blit(img, (r.centerx - int(cx * k), r.centery - int(cy * k)))
+            else:
+                continue
+        alive.append(fx)
+    return alive
+
+
 def portal_transition(screen, clock, center):
     """Círculo que se expande desde el portal y cubre la pantalla."""
     snapshot = screen.copy()
@@ -1013,22 +848,21 @@ def run_invaders(screen, clock, background, invaders_value, shutdown, player_ima
     inv_w, inv_h = INVADER_SIZE
 
     # Sprites (opcionales): enemigo y proyectiles. Si no existen, se dibujan formas simples
-    enemy_frames = load_scaled_frames(INVADER_SPRITE_PATH, INVADER_SIZE, INVADER_SHEET_FRAMES)
-    if not enemy_frames:
-        enemy_img = pygame.Surface(INVADER_SIZE, pygame.SRCALPHA)
-        pygame.draw.ellipse(enemy_img, (120, 255, 120), (0, 0, inv_w, inv_h))
-        pygame.draw.circle(enemy_img, (0, 0, 0), (int(inv_w * 0.3), int(inv_h * 0.45)), 4)
-        pygame.draw.circle(enemy_img, (0, 0, 0), (int(inv_w * 0.7), int(inv_h * 0.45)), 4)
-        enemy_frames = [enemy_img]
+    inv_sprites = load_invader_sprites()
+    bullet_sprites = load_bullet_sprites()
+    if bullet_sprites and not (bullet_sprites["player"] and bullet_sprites["enemy"]):
+        bullet_sprites = None
+    enemy_fallback = None
+    if not inv_sprites:
+        enemy_fallback = pygame.Surface(INVADER_SIZE, pygame.SRCALPHA)
+        pygame.draw.ellipse(enemy_fallback, (120, 255, 120), (0, 0, inv_w, inv_h))
+        pygame.draw.circle(enemy_fallback, (0, 0, 0), (int(inv_w * 0.3), int(inv_h * 0.45)), 4)
+        pygame.draw.circle(enemy_fallback, (0, 0, 0), (int(inv_w * 0.7), int(inv_h * 0.45)), 4)
 
     pb_w, pb_h = PLAYER_BULLET_SIZE
     eb_w, eb_h = ENEMY_BULLET_SIZE
-    player_bullet_frames = load_scaled_frames(
-        PLAYER_BULLET_SPRITE_PATH, PLAYER_BULLET_SIZE, PLAYER_BULLET_SHEET_FRAMES)
-    enemy_bullet_frames = load_scaled_frames(
-        ENEMY_BULLET_SPRITE_PATH, ENEMY_BULLET_SIZE, ENEMY_BULLET_SHEET_FRAMES)
-    if ENEMY_BULLET_FLIP_Y:
-        enemy_bullet_frames = [pygame.transform.flip(f, False, True) for f in enemy_bullet_frames]
+    effects = []                 # impactos y explosiones en curso
+    enemy_attack_until = {}      # id(enemigo) -> momento hasta el que muestra el sprite de ataque
 
     # Enemigos
     enemies = []
@@ -1039,6 +873,7 @@ def run_invaders(screen, clock, background, invaders_value, shutdown, player_ima
         for col in range(INVADERS_COLS):
             enemies.append(pygame.Rect(start_x + col * (inv_w + gap_x), 60 + row * (inv_h + gap_y), inv_w, inv_h))
     total_enemies = len(enemies)
+    enemy_phase = {id(e): random.uniform(0, 2 * math.pi) for e in enemies}
     direction = 1
     move_acc = 0.0
 
@@ -1063,7 +898,6 @@ def run_invaders(screen, clock, background, invaders_value, shutdown, player_ima
                 shutdown()
             if event.type == pygame.KEYDOWN and event.key == pygame.K_b:
                 background.next()
-            music.handle_event(event)
 
         now = pygame.time.get_ticks()
 
@@ -1115,6 +949,7 @@ def run_invaders(screen, clock, background, invaders_value, shutdown, player_ima
                         bottom[e.x] = e
                 shooter = random.choice(list(bottom.values()))
                 enemy_bullets.append(pygame.Rect(shooter.centerx - eb_w // 2, shooter.bottom, eb_w, eb_h))
+                enemy_attack_until[id(shooter)] = now + INVADER_ATTACK_MS
                 last_enemy_shot = now
 
             # --- Mover balas ---
@@ -1132,12 +967,18 @@ def run_invaders(screen, clock, background, invaders_value, shutdown, player_ima
                     enemies.remove(hit)
                     player_bullets.remove(b)
                     score += 10
+                    if inv_sprites:
+                        effects.append({"type": "die", "rect": hit.copy(), "start": now})
+                    if bullet_sprites:
+                        effects.append({"type": "hit", "owner": "player", "pos": b.midtop, "start": now})
 
             # --- Balas enemigas vs jugador ---
             for b in enemy_bullets[:]:
                 if b.colliderect(player) and now > invulnerable_until:
                     enemy_bullets.remove(b)
                     lives -= 1
+                    if bullet_sprites:
+                        effects.append({"type": "hit", "owner": "enemy", "pos": b.midbottom, "start": now})
                     invulnerable_until = now + 1000
 
             # --- Condiciones de fin ---
@@ -1156,17 +997,27 @@ def run_invaders(screen, clock, background, invaders_value, shutdown, player_ima
         background.draw(screen)
 
         for e in enemies:
-            screen.blit(pick_frame(enemy_frames, now, INVADER_ANIM_FPS), e)
+            if inv_sprites:
+                sprite_state = "attack" if now < enemy_attack_until.get(id(e), 0) else "idle"
+                bob = round(INVADER_BOB_AMPLITUDE * math.sin(
+                    now / INVADER_BOB_PERIOD_MS * 2 * math.pi + enemy_phase[id(e)]))
+                ox, oy = inv_sprites["offset"]
+                screen.blit(inv_sprites["frames"][sprite_state], (e.x - ox, e.y - oy + bob))
+            else:
+                screen.blit(enemy_fallback, e)
         for b in player_bullets:
-            if player_bullet_frames:
-                screen.blit(pick_frame(player_bullet_frames, now, BULLET_ANIM_FPS), b)
+            if bullet_sprites:
+                spr = pick_frame(bullet_sprites["player"]["fly"], now, BULLET_ANIM_FPS)
+                screen.blit(spr, (b.centerx - spr.get_width() // 2, b.top))   # la cabeza va arriba
             else:
                 pygame.draw.rect(screen, PLAYER_BULLET_COLOR, b)
         for b in enemy_bullets:
-            if enemy_bullet_frames:
-                screen.blit(pick_frame(enemy_bullet_frames, now, BULLET_ANIM_FPS), b)
+            if bullet_sprites:
+                spr = pick_frame(bullet_sprites["enemy"]["fly"], now, BULLET_ANIM_FPS)
+                screen.blit(spr, (b.centerx - spr.get_width() // 2, b.bottom - spr.get_height()))
             else:
                 pygame.draw.rect(screen, ENEMY_BULLET_COLOR, b)
+        effects = draw_effects(screen, effects, now, inv_sprites, bullet_sprites)
 
         if now > invulnerable_until or (now // 100) % 2 == 0:
             screen.blit(player_image, player)
@@ -1184,7 +1035,6 @@ def run_invaders(screen, clock, background, invaders_value, shutdown, player_ima
             text = font_large.render("¡PERDISTE!", True, (255, 50, 50))
             screen.blit(text, (WIDTH // 2 - text.get_width() // 2, HEIGHT // 2 - 30))
 
-        music.draw(screen, font_small)
         pygame.display.flip()
         clock.tick(FPS)
 
@@ -1237,7 +1087,6 @@ def run_ending(screen, clock, shutdown, ship_image, fonts):
     frame = 0
     while True:
         for event in pygame.event.get():
-            music.handle_event(event)
             if event.type == pygame.QUIT:
                 shutdown()
             if event.type == pygame.KEYDOWN:
@@ -1285,7 +1134,6 @@ def run_ending(screen, clock, shutdown, ship_image, fonts):
             screen.blit(title, (WIDTH // 2 - title.get_width() // 2, 40))
             screen.blit(sub, (WIDTH // 2 - sub.get_width() // 2, HEIGHT - 60))
 
-        music.draw(screen, font_small)
         frame += 1
         pygame.display.flip()
         clock.tick(FPS)
@@ -1299,7 +1147,6 @@ def run_game():
     pygame.init()
     screen = pygame.display.set_mode((WIDTH, HEIGHT))
     pygame.display.set_caption("Body Tracking Flappy Drone")
-    music.start()
     clock = pygame.time.Clock()
     font_large = pygame.font.SysFont("Arial", 48, bold=True)
     font_small = pygame.font.SysFont("Arial", 24)
@@ -1337,7 +1184,6 @@ def run_game():
 
     while True:
         for event in pygame.event.get():
-            music.handle_event(event)
             if event.type == pygame.QUIT:
                 shutdown()
             if event.type == pygame.KEYDOWN:
@@ -1425,7 +1271,7 @@ def run_game():
 
         score_text = font_large.render(f"Puntos: {score}", True, COLOR_TEXT)
         gesture_text = font_small.render(f"Gesto: {gesture}", True, (255, 255, 0))
-        help_text = font_small.render("B: fondo   +/-: volumen   M: silenciar", True, COLOR_TEXT)
+        help_text = font_small.render("B: cambiar fondo", True, COLOR_TEXT)
         screen.blit(score_text, (20, 20))
         screen.blit(gesture_text, (20, 80))
         screen.blit(help_text, (20, HEIGHT - 35))
@@ -1436,7 +1282,6 @@ def run_game():
             screen.blit(go_text, (WIDTH // 2 - go_text.get_width() // 2, HEIGHT // 2 - 50))
             screen.blit(restart_text, (WIDTH // 2 - restart_text.get_width() // 2, HEIGHT // 2 + 20))
 
-        music.draw(screen, font_small)
         pygame.display.flip()
         clock.tick(FPS)
 
