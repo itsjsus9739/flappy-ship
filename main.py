@@ -43,6 +43,15 @@ CAMERA_INDEX = 0
 MODEL_PATH = os.path.join(BASE_DIR, "models", "pose_landmarker_lite.task")
 
 # =====================================================================
+#  CONFIGURACIÓN DEL MENÚ PRINCIPAL
+# =====================================================================
+# Si pones un archivo 'title_logo.png' con transparencia en la carpeta del juego,
+# se usará como logo central. Si no existe, se dibuja el emblema Sci-Fi automático.
+TITLE_LOGO_PATH = os.path.join(BASE_DIR, "title_logo.png")
+GAME_TITLE = "FLAPPY DRONE"
+GAME_SUBTITLE = "SPACE ODYSSEY"
+
+# =====================================================================
 #  CONFIGURACIÓN DE LA MÚSICA
 # =====================================================================
 # Pon tu archivo junto a main.py (o cambia el nombre aquí). Acepta .mp3, .ogg y .wav.
@@ -116,14 +125,14 @@ INVADERS_INVERT_CONTROLS = False       # pon True si se mueve al lado contrario
 # =====================================================================
 #  CONFIGURACIÓN DE LA NAVE (tamaño y modelo 3D opcional)
 # =====================================================================
-DRONE_SIZE = (50, 38)      # tamaño (ancho, alto) de la nave; también es su hitbox
+DRONE_SIZE = (70, 58)      # tamaño (ancho, alto) de la nave; también es su hitbox
 
 # Modelo 3D: .obj (sin instalar nada) o .glb/.gltf/.stl/.ply (requiere: pip install trimesh).
 # Si el archivo no existe, se usa el sprite 2D (ship.jfif) como antes.
 # Prueba y orienta tu modelo con:  python main.py --preview
 SHIP_3D_PATH = os.path.join(BASE_DIR, "ship.glb")
 SHIP_3D_COLOR = (0, 200, 255)          # color base del modelo (no usa texturas)
-SHIP_3D_BASE_ROT = (0, -90, 0)           # rotación (x, y, z) en grados para orientar el modelo
+SHIP_3D_BASE_ROT = (0, -90, 0)         # rotación (x, y, z) en grados para orientar el modelo
 SHIP_3D_TILT_MAX = 25                  # inclinación máxima (grados) al subir/bajar
 SHIP_3D_TILT_STEP = 3                  # paso de la caché de inclinación (grados)
 SHIP_3D_SUPERSAMPLE = 3                # suavizado de bordes (más = más lento al arrancar)
@@ -134,7 +143,7 @@ SHIP_3D_USE_MATERIALS = True           # True: usa los colores/texturas del mode
 # Mundo 2 (Space Invaders): la nave se ve de PLANTA (desde arriba) con la nariz hacia arriba.
 # SHIP_3D_TOPVIEW_ROT es la rotación extra que pasa de perfil a planta; (90, 0, 90) funciona
 # cuando el perfil está bien orientado. Ajústala con:  python main.py --preview  (tecla T)
-INVADERS_SHIP_SIZE = (50, 50)          # tamaño (ancho, alto) de la nave en Space Invaders
+INVADERS_SHIP_SIZE = (70, 58)          # tamaño (ancho, alto) de la nave en Space Invaders
 SHIP_3D_TOPVIEW_ROT = (90, 0, 90)
 
 # =====================================================================
@@ -171,10 +180,10 @@ TENTACLE_PREFIX = "tentacle_"
 
 # Animación de vaivén: la base queda fija y una onda recorre el tentáculo hasta la punta.
 PIPE_ANIM_FPS = 16               # velocidad de la animación (frames por segundo)
-TENTACLE_ANIM_FRAMES = 10       # frames por ciclo (más = más suave, pero usa más memoria)
-TENTACLE_SWAY_AMPLITUDE = 20    # cuánto se mueve la punta de lado a lado (px). 0 = sin movimiento
-TENTACLE_SWAY_WAVES = 2       # cuántas "ondas" caben a lo largo del tentáculo
-TENTACLE_SWAY_STRIP = 3         # alto (px) de cada franja al deformar; 3 mantiene el look pixel-art
+TENTACLE_ANIM_FRAMES = 10        # frames por ciclo (más = más suave, pero usa más memoria)
+TENTACLE_SWAY_AMPLITUDE = 20     # cuánto se mueve la punta de lado a lado (px). 0 = sin movimiento
+TENTACLE_SWAY_WAVES = 2          # cuántas "ondas" caben a lo largo del tentáculo
+TENTACLE_SWAY_STRIP = 3          # alto (px) de cada franja al deformar; 3 mantiene el look pixel-art
 
 # Colores de respaldo si no hay sprites
 COLOR_PIPE = (0, 255, 100)
@@ -239,9 +248,6 @@ def load_animation(path, sheet_frames=1):
     for f in files:
         try:
             img = pygame.image.load(f).convert_alpha()
-            # --- AÑADE ESTA LÍNEA ---
-            # Reemplaza (65, 65, 65) por el valor RGB exacto del gris de tu imagen.
-            # (Usa el cuentagotas de Paint o cualquier editor para ver el RGB de tu fondo).
             img.set_colorkey((65, 65, 65))
             frames.append(img)
         except pygame.error as e:
@@ -309,7 +315,6 @@ def camera_process(gesture_value, invaders_value, stop_event):
         return
 
     cap = cv2.VideoCapture(CAMERA_INDEX)
-     # Posición de las ventanas en pantalla (x, y en píxeles)
     GAME_WINDOW_POS = (50, 80)
     CAMERA_WINDOW_POS = (GAME_WINDOW_POS[0] + WIDTH + 20, GAME_WINDOW_POS[1])
     if not cap.isOpened():
@@ -665,7 +670,7 @@ def _trimesh_face_colors(g):
         if tex is None:
             tex = getattr(mat, "image", None)
         if tex is not None and uv is not None and len(uv) == len(g.vertices):
-            arr = np.asarray(tex.convert("RGB"), dtype=float)       # (alto, ancho, 3)
+            arr = np.asarray(tex.convert("RGB"), dtype=float)        # (alto, ancho, 3)
             return _sample_texture(arr, np.asarray(uv, dtype=float)[faces])
 
         # Material sin textura: color base (glTF) o difuso
@@ -686,7 +691,6 @@ def _trimesh_face_colors(g):
 
 def _load_with_trimesh(path):
     """Formatos .glb/.gltf/.stl/.ply (requiere trimesh). Conserva colores y texturas base."""
-
     try:
         import trimesh
     except ImportError:
@@ -724,7 +728,6 @@ def load_mesh(path):
     if path.lower().endswith(".obj"):
         return _load_obj(path)
     return _load_with_trimesh(path)
-
 
 
 class Ship3D:
@@ -785,7 +788,7 @@ class Ship3D:
     def _render(self, tilt):
         v = self.verts @ (_rot_matrix(0, 0, tilt) @ self.base).T
         v = v - (v.max(axis=0) + v.min(axis=0)) / 2
-        tri = v[self.faces]                                   # (F, 3, 3)
+        tri = v[self.faces]                                  # (F, 3, 3)
 
         # Normales, orientadas hacia la cámara (iluminación de dos caras)
         n = np.cross(tri[:, 1] - tri[:, 0], tri[:, 2] - tri[:, 0])
@@ -922,7 +925,7 @@ class TentacleAnim:
             frame = pygame.Surface((w + 2 * pad, h), pygame.SRCALPHA)
             for y0 in range(0, h, TENTACLE_SWAY_STRIP):
                 sh = min(TENTACLE_SWAY_STRIP, h - y0)
-                u = 1 - (y0 + sh / 2) / h                  # 0 en la base, 1 en la punta
+                u = 1 - (y0 + sh / 2) / h                   # 0 en la base, 1 en la punta
                 phase = 2 * math.pi * (f / n - TENTACLE_SWAY_WAVES * u)
                 dx = round(TENTACLE_SWAY_AMPLITUDE * (u ** 1.5) * math.sin(phase))
                 frame.blit(sprite, (pad + dx, y0), (0, y0, w, sh))
@@ -983,7 +986,7 @@ class Pipe:
         if self.bottom_anim:
             b = self.bottom_anim.bottom[0]
             t = self.top_anim.top[0]
-            cx = self.x + PIPE_WIDTH / 2          # los tentáculos se centran en la columna
+            cx = self.x + PIPE_WIDTH / 2           # los tentáculos se centran en la columna
             self.bottom_pos = (int(cx - b.get_width() / 2), HEIGHT - self.bottom_height)
             self.top_pos = (int(cx - t.get_width() / 2), self.top_height - t.get_height())
 
@@ -1411,7 +1414,7 @@ def run_ending(screen, clock, shutdown, ship_image, fonts):
             if event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_q:
                     shutdown()
-                if event.key == pygame.K_r and frame >= ENDING_FRAMES:
+                if event.key in (pygame.K_r, pygame.K_SPACE, pygame.K_RETURN) and frame >= ENDING_FRAMES:
                     return
 
         t = min(1.0, frame / ENDING_FRAMES)
@@ -1449,12 +1452,197 @@ def run_ending(screen, clock, shutdown, ship_image, fonts):
         # Mensaje final
         if frame >= ENDING_FRAMES:
             title = font_large.render("¡LLEGASTE A TU DESTINO!", True, (255, 255, 255))
-            sub = font_small.render("Presiona 'R' para jugar de nuevo o 'Q' para salir", True, (255, 255, 0))
+            sub = font_small.render("Presiona 'R' para volver al menú o 'Q' para salir", True, (255, 255, 0))
             screen.blit(title, (WIDTH // 2 - title.get_width() // 2, 40))
             screen.blit(sub, (WIDTH // 2 - sub.get_width() // 2, HEIGHT - 60))
 
         frame += 1
         music.draw(screen, font_small)
+        pygame.display.flip()
+        clock.tick(FPS)
+
+
+# =====================================================================
+#  MENÚ PRINCIPAL (ESTILO SONIC CD / SCI-FI)
+# =====================================================================
+def draw_scifi_emblem(surface, center, ship_image, t, title_logo=None):
+    """Dibuja el emblema central estilo Sonic CD (o la imagen title_logo.png si existe)."""
+    cx, cy = center
+    bob = int(math.sin(t * 3.0) * 6)
+    cy += bob
+
+    if title_logo is not None:
+        rect = title_logo.get_rect(center=(cx, cy))
+        surface.blit(title_logo, rect)
+        return
+
+    # --- 1. Alas mecánicas / Sci-Fi (inspiradas en el emblema de Sonic) ---
+    wing_bars = [
+        (190, -35, 22, (0, 220, 255)),
+        (165, -12, 20, (0, 170, 230)),
+        (140,  10, 18, (0, 130, 200)),
+        (110,  30, 16, (0, 90, 160)),
+    ]
+    for length, y_off, height, col in wing_bars:
+        # Ala izquierda
+        pts_l = [
+            (cx - 55, cy + y_off),
+            (cx - 55 - length, cy + y_off - 14),
+            (cx - 40 - length, cy + y_off + height - 14),
+            (cx - 45, cy + y_off + height),
+        ]
+        # Ala derecha
+        pts_r = [
+            (cx + 55, cy + y_off),
+            (cx + 55 + length, cy + y_off - 14),
+            (cx + 40 + length, cy + y_off + height - 14),
+            (cx + 45, cy + y_off + height),
+        ]
+        pygame.draw.polygon(surface, col, pts_l)
+        pygame.draw.polygon(surface, (200, 250, 255), pts_l, 2)
+        pygame.draw.polygon(surface, col, pts_r)
+        pygame.draw.polygon(surface, (200, 250, 255), pts_r, 2)
+
+    # --- 2. Anillo central de energía ---
+    ring_radius = 78
+    glow = pygame.Surface((ring_radius * 2 + 40, ring_radius * 2 + 40), pygame.SRCALPHA)
+    pygame.draw.circle(glow, (0, 200, 255, 45), (ring_radius + 20, ring_radius + 20), ring_radius + 14)
+    surface.blit(glow, glow.get_rect(center=(cx, cy)))
+
+    pygame.draw.circle(surface, (10, 16, 36), (cx, cy), ring_radius)
+    pygame.draw.circle(surface, (0, 230, 255), (cx, cy), ring_radius, 5)
+    pygame.draw.circle(surface, (255, 200, 60), (cx, cy), ring_radius - 9, 2)
+
+    # Arco giratorio interno
+    arc_rect = pygame.Rect(0, 0, (ring_radius - 16) * 2, (ring_radius - 16) * 2)
+    arc_rect.center = (cx, cy)
+    pygame.draw.arc(surface, (0, 255, 200), arc_rect, t * 2.5, t * 2.5 + 2.2, 4)
+    pygame.draw.arc(surface, (0, 255, 200), arc_rect, t * 2.5 + math.pi, t * 2.5 + math.pi + 2.2, 4)
+
+    # --- 3. Nave protagonista en el centro del anillo ---
+    ship_scaled = pygame.transform.smoothscale(ship_image, (96, 74))
+    surface.blit(ship_scaled, ship_scaled.get_rect(center=(cx, cy - 6)))
+
+    # --- 4. Cinta / Banner inferior con el título Sci-Fi ---
+    banner_w, banner_h = 420, 64
+    banner_rect = pygame.Rect(0, 0, banner_w, banner_h)
+    banner_rect.center = (cx, cy + 72)
+
+    # Puntas laterales del listón
+    left_ribbon = [
+        (banner_rect.left - 28, banner_rect.centery - 8),
+        (banner_rect.left + 8, banner_rect.top + 8),
+        (banner_rect.left + 8, banner_rect.bottom + 8),
+        (banner_rect.left - 28, banner_rect.bottom + 18),
+        (banner_rect.left - 14, banner_rect.centery + 4),
+    ]
+    right_ribbon = [
+        (banner_rect.right + 28, banner_rect.centery - 8),
+        (banner_rect.right - 8, banner_rect.top + 8),
+        (banner_rect.right - 8, banner_rect.bottom + 8),
+        (banner_rect.right + 28, banner_rect.bottom + 18),
+        (banner_rect.right + 14, banner_rect.centery + 4),
+    ]
+    pygame.draw.polygon(surface, (140, 20, 60), left_ribbon)
+    pygame.draw.polygon(surface, (140, 20, 60), right_ribbon)
+
+    # Cuerpo del banner
+    pygame.draw.rect(surface, (200, 30, 80), banner_rect, border_radius=10)
+    pygame.draw.rect(surface, (0, 240, 255), banner_rect, 3, border_radius=10)
+
+    # Texto con efecto metálico/neón Sci-Fi
+    font_title = pygame.font.SysFont("Impact", 46, italic=True)
+    font_sub = pygame.font.SysFont("Consolas", 16, bold=True)
+
+    title_shadow = font_title.render(GAME_TITLE, True, (10, 10, 30))
+    title_cyan = font_title.render(GAME_TITLE, True, (0, 240, 255))
+    title_white = font_title.render(GAME_TITLE, True, (240, 250, 255))
+
+    tx = cx - title_white.get_width() // 2
+    ty = banner_rect.top + 2
+    surface.blit(title_shadow, (tx + 3, ty + 3))
+    surface.blit(title_cyan, (tx - 2, ty - 1))
+    surface.blit(title_white, (tx, ty))
+
+    sub_surf = font_sub.render(GAME_SUBTITLE, True, (255, 230, 120))
+    surface.blit(sub_surf, (cx - sub_surf.get_width() // 2, banner_rect.bottom - 19))
+
+
+def run_menu(screen, clock, background, shutdown, ship_image, is_dead=False, last_score=0):
+    """Muestra el menú principal o de reintento con un único botón minimalista."""
+    font_btn = pygame.font.SysFont("Consolas", 26, bold=True)
+    font_info = pygame.font.SysFont("Arial", 22, bold=True)
+
+    title_logo = None
+    if os.path.isfile(TITLE_LOGO_PATH):
+        try:
+            img = pygame.image.load(TITLE_LOGO_PATH).convert_alpha()
+            scale = min(460 / max(1, img.get_width()), 260 / max(1, img.get_height()), 1.0)
+            if scale < 1.0:
+                img = pygame.transform.smoothscale(
+                    img, (int(img.get_width() * scale), int(img.get_height() * scale))
+                )
+            title_logo = img
+        except pygame.error as e:
+            print(f"ADVERTENCIA: no se pudo cargar '{TITLE_LOGO_PATH}': {e}")
+
+    btn_rect = pygame.Rect(0, 0, 260, 54)
+    btn_rect.center = (WIDTH // 2, HEIGHT - 95)
+    btn_label = "REINTENTAR" if is_dead else "JUGAR"
+
+    while True:
+        mouse_pos = pygame.mouse.get_pos()
+        hover = btn_rect.collidepoint(mouse_pos)
+
+        for event in pygame.event.get():
+            music.handle_event(event)
+            if event.type == pygame.QUIT:
+                shutdown()
+            if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_q:
+                    shutdown()
+                if event.key == pygame.K_b:
+                    background.next()
+                # Un solo botón de acción en teclado (Espacio, Enter o R)
+                if event.key in (pygame.K_SPACE, pygame.K_RETURN, pygame.K_KP_ENTER, pygame.K_r):
+                    return
+            if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                if hover:
+                    return
+
+        t = pygame.time.get_ticks() / 1000.0
+
+        # 1. Fondo del juego en movimiento
+        background.update()
+        background.draw(screen)
+
+        # Velo oscuro sutil para que el logo y el botón resalten sobre el fondo
+        overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+        overlay.fill((5, 8, 22, 95))
+        screen.blit(overlay, (0, 0))
+
+        # 2. Emblema / Logo central estilo Sonic CD
+        draw_scifi_emblem(screen, (WIDTH // 2, HEIGHT // 2 - 55), ship_image, t, title_logo)
+
+        # Si viene de morir, muestra el puntaje obtenido de forma limpia
+        if is_dead:
+            msg = font_info.render(f"¡NAVE DESTRUIDA!  •  PUNTOS: {last_score}", True, (255, 110, 110))
+            screen.blit(msg, (WIDTH // 2 - msg.get_width() // 2, btn_rect.top - 42))
+
+        # 3. Botón único minimalista
+        pulse = int((math.sin(t * 5.0) + 1) * 35)
+        border_col = (255, 255, 255) if hover else (0, min(255, 200 + pulse), 255)
+        fill_col = (0, 130, 190, 220) if hover else (12, 24, 52, 200)
+
+        btn_surf = pygame.Surface(btn_rect.size, pygame.SRCALPHA)
+        pygame.draw.rect(btn_surf, fill_col, btn_surf.get_rect(), border_radius=12)
+        screen.blit(btn_surf, btn_rect.topleft)
+        pygame.draw.rect(screen, border_col, btn_rect, 2, border_radius=12)
+
+        txt = font_btn.render(btn_label, True, (255, 255, 255))
+        screen.blit(txt, txt.get_rect(center=btn_rect.center))
+
+        music.draw(screen, font_info)
         pygame.display.flip()
         clock.tick(FPS)
 
@@ -1497,11 +1685,14 @@ def run_game():
         print("AVISO: no hay sprites tentacle_*.png en 'pipes/', se usan rectángulos de color.")
 
     drone = Drone()
+
+    # --- Mostrar el menú principal antes de empezar ---
+    run_menu(screen, clock, background, shutdown, drone.image, is_dead=False)
+
     pipes = [Pipe(pipe_frames)]
     score = 0
     level = 0
     next_portal_level = PORTAL_FIRST_LEVEL
-    game_over = False
 
     while True:
         for event in pygame.event.get():
@@ -1513,13 +1704,6 @@ def run_game():
                     shutdown()
                 if event.key == pygame.K_b:
                     background.next()
-                if event.key == pygame.K_r and game_over:
-                    drone = Drone()
-                    pipes = [Pipe(pipe_frames)]
-                    score = 0
-                    level = 0
-                    next_portal_level = PORTAL_FIRST_LEVEL
-                    game_over = False
 
         # Gesto de la cámara; las flechas sirven de respaldo/pruebas
         gesture = CODE_TO_GESTURE.get(gesture_value.value, "HOVER")
@@ -1529,57 +1713,68 @@ def run_game():
         elif keys[pygame.K_DOWN]:
             gesture = "DOWN"
 
-        if not game_over:
-            level, spacing, gap, speed = get_difficulty(score)
+        level, spacing, gap, speed = get_difficulty(score)
 
-            background.update()
-            drone.move(gesture)
+        background.update()
+        drone.move(gesture)
 
-            enter_portal = False
-            for pipe in pipes:
-                pipe.move(speed)
+        enter_portal = False
+        died = False
+        for pipe in pipes:
+            pipe.move(speed)
 
-                # El portal no mata: al tocarlo se entra al minijuego
-                if isinstance(pipe, Portal):
-                    if pipe.touches(drone.rect):
-                        enter_portal = True
-                    continue
-
-                if pipe.collides(drone.rect):
-                    game_over = True
-
-                if not pipe.passed and pipe.x < drone.rect.x:
-                    score += 1
-                    pipe.passed = True
-
-            if enter_portal:
-                portal_transition(screen, clock, drone.rect.center)
-                result = run_invaders(screen, clock, invaders_background, invaders_value,
-                                      shutdown, get_invaders_ship_image(drone), (font_large, font_small))
-                if result == "win":
-                    # Ganó Space Invaders: pantalla final y el juego se reinicia con R
-                    run_ending(screen, clock, shutdown, drone.image, (font_large, font_small))
-                    drone = Drone()
-                    pipes = [Pipe(pipe_frames)]
-                    score = 0
-                    level = 0
-                    next_portal_level = PORTAL_FIRST_LEVEL
-                else:
-                    # Perdió: vuelve a Flappy con su puntuación; el siguiente portal
-                    # aparece en el próximo nivel múltiplo de PORTAL_EVERY
-                    drone = Drone()
-                    pipes = [Pipe(pipe_frames, gap)]
+            # El portal no mata: al tocarlo se entra al minijuego
+            if isinstance(pipe, Portal):
+                if pipe.touches(drone.rect):
+                    enter_portal = True
                 continue
 
-            if pipes[0].x < -150:
-                pipes.pop(0)
+            if pipe.collides(drone.rect):
+                died = True
 
-            if pipes[-1].x < WIDTH - spacing:
-                if level >= next_portal_level:
-                    pipes.append(Portal())
-                    next_portal_level += PORTAL_EVERY
-                else:
-                    pipes.append(Pipe(pipe_frames, gap))
+            if not pipe.passed and pipe.x < drone.rect.x:
+                score += 1
+                pipe.passed = True
+
+        # --- Si la nave muere, abre el menú de un solo botón ---
+        if died:
+            run_menu(screen, clock, background, shutdown, drone.image, is_dead=True, last_score=score)
+            drone = Drone()
+            pipes = [Pipe(pipe_frames)]
+            score = 0
+            level = 0
+            next_portal_level = PORTAL_FIRST_LEVEL
+            continue
+
+        if enter_portal:
+            portal_transition(screen, clock, drone.rect.center)
+            result = run_invaders(screen, clock, invaders_background, invaders_value,
+                                  shutdown, get_invaders_ship_image(drone), (font_large, font_small))
+            if result == "win":
+                # Ganó Space Invaders: pantalla final y luego vuelve al menú principal
+                run_ending(screen, clock, shutdown, drone.image, (font_large, font_small))
+                run_menu(screen, clock, background, shutdown, drone.image, is_dead=False)
+                drone = Drone()
+                pipes = [Pipe(pipe_frames)]
+                score = 0
+                level = 0
+                next_portal_level = PORTAL_FIRST_LEVEL
+            else:
+                # Perdió: vuelve a Flappy con su puntuación; el siguiente portal
+                # aparece en el próximo nivel múltiplo de PORTAL_EVERY
+                drone = Drone()
+                pipes = [Pipe(pipe_frames, gap)]
+            continue
+
+        if pipes[0].x < -150:
+            pipes.pop(0)
+
+        if pipes[-1].x < WIDTH - spacing:
+            if level >= next_portal_level:
+                pipes.append(Portal())
+                next_portal_level += PORTAL_EVERY
+            else:
+                pipes.append(Pipe(pipe_frames, gap))
 
         # --- Dibujo ---
         background.draw(screen)
@@ -1595,12 +1790,6 @@ def run_game():
         gesture_text = font_small.render(f"Gesto: {gesture}", True, (255, 255, 0))
         screen.blit(score_text, (20, 20))
         screen.blit(gesture_text, (20, 80))
-
-        if game_over:
-            go_text = font_large.render("¡CHOCASTE!", True, (255, 50, 50))
-            restart_text = font_small.render("Presiona 'R' para reiniciar o 'Q' para salir", True, COLOR_TEXT)
-            screen.blit(go_text, (WIDTH // 2 - go_text.get_width() // 2, HEIGHT // 2 - 50))
-            screen.blit(restart_text, (WIDTH // 2 - restart_text.get_width() // 2, HEIGHT // 2 + 20))
 
         music.draw(screen, font_small)
         pygame.display.flip()
