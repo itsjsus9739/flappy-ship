@@ -128,6 +128,7 @@ SHIP_3D_TILT_MAX = 25                  # inclinación máxima (grados) al subir/
 SHIP_3D_TILT_STEP = 3                  # paso de la caché de inclinación (grados)
 SHIP_3D_SUPERSAMPLE = 3                # suavizado de bordes (más = más lento al arrancar)
 SHIP_3D_LIGHT = (0.4, 0.6, 0.7)        # dirección de la luz (x, y, z)
+SHIP_3D_USE_MATERIALS = True           # True: usa los colores/texturas del modelo; False: solo SHIP_3D_COLOR
 
 # Mundo 1 (Flappy): la nave se ve de PERFIL con la nariz a la derecha (SHIP_3D_BASE_ROT).
 # Mundo 2 (Space Invaders): la nave se ve de PLANTA (desde arriba) con la nariz hacia arriba.
@@ -514,25 +515,6 @@ def _rot_matrix(rx, ry, rz):
     return rot_z @ rot_y @ rot_x
 
 
-def load_mesh(path):
-    """Carga un modelo 3D. Devuelve (vértices Nx3, triángulos Mx3)."""
-    if path.lower().endswith(".obj"):
-        verts, faces = [], []
-        with open(path, encoding="utf-8", errors="ignore") as f:
-            for line in f:
-                if line.startswith("v "):
-                    p = line.split()
-                    verts.append([float(p[1]), float(p[2]), float(p[3])])
-                elif line.startswith("f "):
-                    idx = []
-                    for tok in line.split()[1:]:
-                        i = int(tok.split("/")[0])
-                        idx.append(i - 1 if i > 0 else len(verts) + i)
-                    for k in range(1, len(idx) - 1):      # triangula polígonos
-                        faces.append((idx[0], idx[k], idx[k + 1]))
-        return np.array(verts, dtype=float), np.array(faces, dtype=int)
-
-
 def _load_texture(value, base_dir):
     """Carga la textura de un 'map_Kd' como arreglo (alto, ancho, 3). None si falla."""
     value = value.strip()
@@ -574,6 +556,11 @@ def _parse_mtl(mtl_path):
             elif key == "map_kd":
                 current["texture"] = _load_texture(val, base_dir)
     return materials
+
+
+def _kd_to_rgb(kd):
+    """Color difuso (0-1) -> RGB 0-255."""
+    return np.clip(np.asarray(kd, dtype=float) * 255.0, 0, 255)
 
 
 def _sample_texture(tex, uv):
@@ -810,7 +797,8 @@ class Ship3D:
         light = np.array(SHIP_3D_LIGHT, dtype=float)
         light /= np.linalg.norm(light)
         intensity = 0.35 + 0.65 * np.clip(n @ light, 0, 1)
-        colors = np.clip(self.color * intensity[:, None], 0, 255).astype(int).tolist()
+        base = self.face_colors if self.face_colors is not None else self.color
+        colors = np.clip(base * intensity[:, None], 0, 255).astype(int).tolist()
 
         # Algoritmo del pintor: de lo más lejano a lo más cercano
         order = np.argsort(tri[:, :, 2].mean(axis=1))
@@ -1220,6 +1208,7 @@ def run_invaders(screen, clock, background, invaders_value, shutdown, player_ima
 
     while True:
         for event in pygame.event.get():
+            music.handle_event(event)
             if event.type == pygame.QUIT:
                 shutdown()
             if event.type == pygame.KEYDOWN and event.key == pygame.K_q:
@@ -1363,6 +1352,7 @@ def run_invaders(screen, clock, background, invaders_value, shutdown, player_ima
             text = font_large.render("¡PERDISTE!", True, (255, 50, 50))
             screen.blit(text, (WIDTH // 2 - text.get_width() // 2, HEIGHT // 2 - 30))
 
+        music.draw(screen, font_small)
         pygame.display.flip()
         clock.tick(FPS)
 
@@ -1415,6 +1405,7 @@ def run_ending(screen, clock, shutdown, ship_image, fonts):
     frame = 0
     while True:
         for event in pygame.event.get():
+            music.handle_event(event)
             if event.type == pygame.QUIT:
                 shutdown()
             if event.type == pygame.KEYDOWN:
@@ -1463,6 +1454,7 @@ def run_ending(screen, clock, shutdown, ship_image, fonts):
             screen.blit(sub, (WIDTH // 2 - sub.get_width() // 2, HEIGHT - 60))
 
         frame += 1
+        music.draw(screen, font_small)
         pygame.display.flip()
         clock.tick(FPS)
 
@@ -1478,6 +1470,7 @@ def run_game():
     clock = pygame.time.Clock()
     font_large = pygame.font.SysFont("Arial", 48, bold=True)
     font_small = pygame.font.SysFont("Arial", 24)
+    music.start()
 
     # --- Lanzar la cámara en un segundo proceso ---
     gesture_value = mproc.Value("i", 0)
@@ -1512,6 +1505,7 @@ def run_game():
 
     while True:
         for event in pygame.event.get():
+            music.handle_event(event)
             if event.type == pygame.QUIT:
                 shutdown()
             if event.type == pygame.KEYDOWN:
@@ -1610,6 +1604,7 @@ def run_game():
             screen.blit(go_text, (WIDTH // 2 - go_text.get_width() // 2, HEIGHT // 2 - 50))
             screen.blit(restart_text, (WIDTH // 2 - restart_text.get_width() // 2, HEIGHT // 2 + 20))
 
+        music.draw(screen, font_small)
         pygame.display.flip()
         clock.tick(FPS)
 
