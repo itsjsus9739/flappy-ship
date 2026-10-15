@@ -1593,10 +1593,8 @@ def run_game():
 
         score_text = font_large.render(f"Puntos: {score}", True, COLOR_TEXT)
         gesture_text = font_small.render(f"Gesto: {gesture}", True, (255, 255, 0))
-        help_text = font_small.render("B: cambiar fondo", True, COLOR_TEXT)
         screen.blit(score_text, (20, 20))
         screen.blit(gesture_text, (20, 80))
-        screen.blit(help_text, (20, HEIGHT - 35))
 
         if game_over:
             go_text = font_large.render("¡CHOCASTE!", True, (255, 50, 50))
